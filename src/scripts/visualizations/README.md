@@ -1,10 +1,14 @@
 # Visualizations
 
-Every figure and table of the paper is drawn by a module of this package from the **released paper tree**
-(`${DATA_ROOT}/cueball`, GPU-free, no API key). Nothing here regenerates, re-parses (beyond baseline sample 0) or
-re-judges a rollout: the scripts read the tree and write tables and figures next to it. The exact definitions
-behind every number are in [DEFINITIONS.md](DEFINITIONS.md); each plot folder's `NOTES.md` restates the ones it
-uses, lists its exclusions and carries a caption draft.
+Two reproducible figure workflows are maintained here; neither generates or re-judges rollouts.
+
+- **September 26 manuscript revision:** `make_all --paper-revision-bundle ... --out-root ...`
+  (or `paper_revision --bundle ... --out-root ...`) recomputes 24 reference plotting tables and
+  additional dose-response/crosscheck/stability tables from the verified pair/re-roll records,
+  then renders 33 PDFs and three LaTeX tables. See [PAPER_REPRODUCTION.md](../../../PAPER_REPRODUCTION.md).
+- **Released-tree / legacy figures:** the commands below read `${DATA_ROOT}/cueball` and preserve
+  their original output definitions. [DEFINITIONS.md](DEFINITIONS.md) and each plot's `NOTES.md`
+  document those definitions; the revised counterparts are documented in the revision guide.
 
 Run everything as modules from the repository root:
 
