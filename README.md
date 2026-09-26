@@ -1,21 +1,27 @@
-# CueBall — generating and validating chain-of-thought unfaithfulness data
+# One Draw Is Not Enough: Resampling-Based Labels for Chain-of-Thought Unfaithfulness
 
-Code for *CueBall: a statistical framework for generating unfaithfulness evaluation data and
-validating the generation and labeling process*. Given a model and a multiple-choice dataset,
-the pipeline
+This repository contains **CueBall**, the pipeline used in the paper. Given a model and a
+multiple-choice dataset, it
 
-1. samples a **baseline** answer distribution per question (repeated sampling, majority vote);
+1. samples a **baseline** answer distribution per question (eight draws, accepting an answer
+   with at least five votes in the paper configuration);
 2. injects a **cue** (eight styles: social, artifact and multi-turn) that points at another option
    and generates one hinted reasoning rollout per (question, cue);
-3. has an **LLM judge** label every rollout that switched to the cued option: does the reasoning
-   verbalize the cue as a reason for the answer (faithful) or not (unfaithful);
-4. builds the **per-rollout manifest** and **re-samples** every switched rollout (k = 4 with
-   matched controls) to separate cue reliance from sampling noise;
-5. reports the statistics (noise model, reliance labels, unfaithfulness rates with confidence
-   intervals, cross-model figures) and validates the judge against a second judge family.
+3. has an **LLM judge** check coherence and assign the cue's role in each switched rollout:
+   credited, verification_only, rejected, neutral or none;
+4. builds the **per-rollout manifest** and draws **four fresh re-rolls** of every switch and
+   matched controls to measure target-answer recurrence;
+5. reports persistence, judge-assigned unfaithfulness rates and aggregate noise estimates,
+   and audits judge agreement with another model family and human adjudication.
 
-A downstream, optional part trains white-box probes (linear, attention, TF-IDF) on residual-stream
-activations of the re-rolled rollouts.
+The machine-readable persistence labels retain their existing names: `robust_used` means at
+least three of four fresh re-rolls answer the target; `weak_used` means one or two do; for switched
+pairs with four observed outcomes, `mixed` means none does. Failing the persistence threshold
+is not itself evidence of sampling noise, and persistence does not establish that the cue caused
+an individual answer or that a trace's claim of non-reliance is false.
+
+The pipeline and existing configuration/data paths retain the name `cueball`. Optional downstream
+work trains linear or attention probes on activations and TF-IDF baselines on text.
 
 ## Setup
 
@@ -32,9 +38,10 @@ cp .env.example .env         # fill in the keys below
 | `HF_TOKEN` | gated datasets (GPQA) and the optional Hugging Face activation store |
 | `DATA_ROOT` | root of the data tree every `${DATA_ROOT}/...` config path resolves against (unset = `<repo>/data`) |
 
-Generation stages need a CUDA GPU (vLLM); activation collection and probe training need a GPU and
-`transformers`; every other stage is GPU-free. Run every script as a module from the repo root:
+Generation stages need a CUDA GPU (vLLM); activation collection and activation-based probe training
+need a GPU and `transformers`. TF-IDF training and the remaining stages are GPU-free. Run every script as a module from the repo root:
 `uv run python -m src.scripts.<name> --config <yaml>` and/or flags (`--help` lists them).
+Figure modules live under `src.scripts.visualizations.<name>`.
 
 ## Running the pipeline
 
@@ -73,40 +80,50 @@ default; 11–14 run only when named in the config's `stages:` list or `--stages
 
 The config's top level holds what every stage shares (`extends: ../<model>_base.yaml` brings
 `model_name`, `seed`, `thinking`, `inference`), then one section per stage script carrying that
-script's own keys. Per-model bases live in `configs/*_base.yaml` (the six paper models: Qwen3-8B, Qwen3.5-9B,
-Qwen3.6-27B, Nemotron-Nano-9B-v2, Olmo-3-7B-Think, Gemma-4-12B-it; `src/lib/model_utils.py`
-registers a few more); datasets are
+script's own keys. Per-model bases live in `configs/*_base.yaml`. The five models in the paper are
+Qwen3-8B, Qwen3.5-9B, Nemotron-Nano-9B-v2, Olmo-3-7B-Think and Gemma-4-12B-it; the broader release
+also includes Qwen3.6-27B, and `src/lib/model_utils.py` registers additional models. Datasets are
 `mmlu`, `mmlu_pro`, `gpqa`, `medqa`, `aqua`, `commonsense_qa` (`src/lib/dataset.py`); cue styles are
 the `HINTS` registry in `src/lib/hints.py`; judge prompts are in `configs/llm_judge_prompts/`.
 
 ## Reproducing the paper
 
-The paper grid (Nemotron-Nano-9B-v2, Qwen3.5-9B, Qwen3-8B, Qwen3.6-27B, Olmo-3-7B-Think,
-Gemma-4-12B-it × CommonsenseQA, MedQA, GPQA-Extended, MMLU-Pro-1000) is `configs/cueball/`, one
-`run_pipeline_<model>_<dataset>.yaml` per cell under one recipe (8 baseline samples at T 0.7
-accepted at ≥ 5 votes, 16,384-token budgets, the 8 cue styles, judge `z-ai/glm-5.3-flash`, k = 4
-re-rolls with seeds 43–46). Its data tree is `${DATA_ROOT}/cueball/`; see
-[configs/cueball/README.md](configs/cueball/README.md) for the recipe, the tree layout and the notes on
-truncation. With the released tree in place (it must include `cueball/hinted_rollouts/judge_label_overrides.csv`,
-the researcher-adjudicated label overrides the manifest applies), the tree-level stages rebuild the
-manifest, the re-sampling labels, the summary tables and the figures from the released rollouts.
-They act on the whole tree, so one cell config is enough; add `splits` (and the opt-in probe stages)
-for the downstream part:
+The paper evaluates the five models above on CommonsenseQA, MedQA, GPQA-Extended and
+MMLU-Pro-1000. `configs/cueball/` contains one `run_pipeline_<model>_<dataset>.yaml` per cell,
+including four additional Qwen3.6-27B cells in the broader six-model release. Tree-level stages
+process the full available tree; generic figure outputs can therefore include that additional
+model. Use the five-model selection of the paper's analysis modules for manuscript comparisons.
+
+The recipe uses 8 baseline samples at T 0.7 accepted at ≥ 5 votes, 8 cue styles, judge
+`z-ai/glm-5.3-flash`, and 4 fresh re-rolls with seeds 43–46. Baselines use top-p 1.0 without top-k
+truncation; cued rollouts and re-rolls use top-p 0.95 / top-k 20. The configured generation budget
+is 16,384 tokens; the released Nemotron re-rolls were generated with 24,576. See
+[configs/cueball/README.md](configs/cueball/README.md) for the configuration recipe and
+[src/scripts/visualizations/DEFINITIONS.md](src/scripts/visualizations/DEFINITIONS.md) for the
+analysis populations and exclusion rules.
+
+Keep the released data read-only and reproduce into a **writable scratch copy**. Its layout must
+retain `cueball/` and the shared inputs used by the selected stages; see [DATA.md](DATA.md).
+Include `cueball/hinted_rollouts/judge_label_overrides.csv`, the researcher-adjudicated overrides
+applied by the manifest. One cell config is enough to run the tree-level stages:
 
 ```bash
-export DATA_ROOT=/path/to/data          # holds cueball/
+export DATA_ROOT=/path/to/scratch-data  # contains a writable copy of the released tree
+uv run python -m src.scripts.run_pipeline --config configs/cueball/run_pipeline_q38b_csqa.yaml \
+    --stages manifest,resample_select,relabel,summary,figures,splits --dry-run
 uv run python -m src.scripts.run_pipeline --config configs/cueball/run_pipeline_q38b_csqa.yaml \
     --stages manifest,resample_select,relabel,summary,figures,splits
 ```
 
-Rerunning a cell config with its default stages resumes past everything that exists (baseline,
-rollouts, judged verdicts, re-rolls) and regenerates only what is missing; the generation stages
-need a GPU and the judge stages an OpenRouter key.
+Generation and judging stages resume using their completion checks and caches. Derived stages
+such as `manifest`, `relabel`, `summary` and `figures` run again when selected and can overwrite
+outputs in the scratch tree. Generation needs a GPU; judging needs an OpenRouter key. The
+`splits` stage assigns question-level train/validation/test membership, shared by cues and re-rolls.
 
 The paper's numbers come from `cueball/hinted_rollouts/rollout_manifest.parquet` (one row per hinted
 rollout: switch flags, judge label and role, baseline stability, truncation),
 `cueball/resample/resample_manifest.parquet` + `question_reliance.csv` (the re-rolls and the
-per-(question, cue) reliance label), `cueball/resample/noise_model*.csv`, `survival_*.csv`,
+per-(question, cue) persistence label, stored as `reliance_label`), `cueball/resample/noise_model*.csv`, `survival_*.csv`,
 `cueball/hinted_rollouts/unfaithfulness_metrics_summary.md` and `cueball/figures/`. Group by the
 manifest's `dataset` column, not by `run`. `src/scripts/judge_validation.py`
 (`configs/judge_validation.yaml`) is the judge-reliability study: a stratified sample re-judged by
@@ -115,11 +132,50 @@ review sheet and the label overrides applied to the manifest. `src/scripts/visua
 draws the paper's judge-validation figures from that run, the binary-judge verdicts under
 `cueball/binary_judge/` and the manual golden set (κ per cue style and role against the arbiter, the
 binary-vs-role confusion, the researcher's spot-check precision per role, and the headline rates
-recomputed under arbiter and reviewer labels) into `cueball/plots/judge_validation/J*.{pdf,png}` + `figures_judge.md`. The whole figure catalogue — F1–F9, J1–J4 and the per-plot `gather` / `plot` modules under `src/scripts/visualizations/<plot>/` with their definitions — is indexed in [src/scripts/visualizations/README.md](src/scripts/visualizations/README.md).
+recomputed under arbiter and reviewer labels) into `cueball/plots/judge_validation/J*.{pdf,png}` + `figures_judge.md`.
+
+Judge-validation plots default to the five paper models and **all eight cues**, including
+`grader_hacking`: `--cues paper` and `--cues all` both select all eight. A comma-separated cue
+list restricts the J1a/J1b per-cue and pooled summaries, J4b cue rows, and J2's rollout population;
+J1c, J3 and J4a/J4c continue to use all sampled cues. For example:
+
+```bash
+uv run python -m src.scripts.visualizations.judge_validation_plots \
+    --models paper --cues all
+```
+
+The whole figure catalogue — F1–F9, J1–J4 and the per-plot `gather` / `plot` modules under `src/scripts/visualizations/<plot>/` with their definitions — is indexed in [src/scripts/visualizations/README.md](src/scripts/visualizations/README.md).
+
+## Interpretation and current analysis scope
+
+The paper's about-40% non-persistence result concerns **positive-case SSP-unfaithful originals at
+temperature 0.7 on baseline-screened questions**. It is not an error rate for temperature-zero
+studies. The alpha-implied noise share is compared with non-recurrence and non-persistence as
+different quantities; it does not identify individual causal reliance.
+
+SSP uses baseline sample 0 and a binary judge on original flips; RSP uses the role judge on
+on-target re-rolls from persistent pairs. Their reported rate comparison changes population,
+judge and weighting together. Most rate and survival plots currently use Wilson intervals,
+which ignore question-level clustering. The question-cluster reanalysis and equal-pair-weighted
+RSP comparison remain pending.
+
+Other limits retained in the reported results are the baseline/cued decoding mismatch,
+truncated re-rolls counted as off-target for persistence, missing role labels on some originals,
+and pooled inclusion of `post_hoc` instructed justification. The primary judge audit covers one
+model and dataset; its inter-LLM agreement is not human-label accuracy or validation of the
+incoherent label. Additional controls and sensitivities require the data analyses described in
+the manuscript.
+
+The paper reports 20,000 re-rolls from persistent pairs judged unfaithful or incoherent (1,223
+incoherent). These are dependent traces. The 1,995 strict clean pairs in its cost funnel are a
+different subset; neither number is a count of independent questions.
 
 ## Reproducibility of the released tree
 
-Checked against the released tree with this code (read-only; everything regenerated into a scratch copy):
+The initial release documented these checks on the **six-model tree** (24 cells), with all
+regeneration performed in a scratch copy. They are historical reproduction results, not a new
+validation of the revised five-model manuscript. Figure-byte equality predates the subsequent
+judge-plot correction:
 
 | artifact | result |
 | --- | --- |
@@ -146,7 +202,7 @@ method section.
 src/scripts/                one CLI per stage (run_pipeline.py chains them); each takes --config and/or flags
 src/scripts/visualizations/ the figure catalogue (paper_plots.py, judge_validation_plots.py, one folder per plot)
 src/lib/                    the shared library — the single source of truth every script imports from
-configs/                    per-model bases, the paper grid (cueball/), the reference pipeline config, judge prompts, probe specs
+configs/                    per-model bases, the release grid (cueball/), the reference pipeline config, judge prompts, probe specs
 tests/                      stdlib unittest, one <module>_test.py per source file, GPU/network mocked
 DATA.md                     the released data tree: layout, provenance, what to ship and what to leave out
 AGENTS.md, CLAUDE.md, .claude/skills/cueball/   guidance for agents using or working on the repo
@@ -155,9 +211,9 @@ AGENTS.md, CLAUDE.md, .claude/skills/cueball/   guidance for agents using or wor
 Key library modules: `hints.py` (the cue styles and their judge-facing excerpts), `parsing.py`
 (answer / reasoning extraction, per-model delimiters), `model_utils.py` (model registry, vLLM and
 HF loaders, thinking-mode resolution), `hinted_rollouts.py` (the hinted-rollout row contract and
-work items), `llm_judge_verb.py` (the binary LLM judge and its content-addressed cache),
+work items), `llm_judge_verb.py` (the verbalization/role judge and its content-addressed cache),
 `rollout_manifest.py` (the per-rollout manifest schema and exclusion rules), `resample.py`
-(noise model, re-sample selection, reliance labels), `selection.py` (named row predicates and
+(noise model, re-sample selection, persistence labels under existing reliance-label keys), `selection.py` (named row predicates and
 label configurations — the only place rollouts are selected), `splits.py`, `probe_datasets.py`,
 `activation_store.py`, `probe_training.py`, `probes.py`, `report.py`, `probe_metrics.py`.
 
