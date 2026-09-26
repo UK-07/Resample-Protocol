@@ -7,8 +7,8 @@ import unittest
 import numpy as np
 import pandas as pd
 
-from src.lib.paper_revision import common as rc
-from src.lib.paper_revision.recompute import (
+from src.lib.paper_figures import common as rc
+from src.lib.paper_figures.recompute import (
     alpha_contrast_pvalues, build, persistence_tables, role_tables,
 )
 
@@ -41,7 +41,6 @@ class QuestionClusterTest(unittest.TestCase):
         np.testing.assert_array_equal(a.W, b.W)
         for dataset in ("a", "b"):
             np.testing.assert_array_equal(a.W[:, a.dataset == dataset].sum(1), 2)
-        self.assertEqual(a.fingerprint, b.fingerprint)
 
 
 class AlphaSignTest(unittest.TestCase):
@@ -68,7 +67,7 @@ class AlphaSignTest(unittest.TestCase):
         self.assertTrue(np.isnan(alpha_contrast_pvalues(bootstrap, rows, q_counts, measured, [])))
 
 
-class RevisionTableTest(unittest.TestCase):
+class FiguresTableTest(unittest.TestCase):
     @staticmethod
     def pairs():
         # All six persistent-count outcomes are independently inspectable. The

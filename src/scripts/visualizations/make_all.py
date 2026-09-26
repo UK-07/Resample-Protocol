@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """Run every plot's ``gather`` then ``plot`` in a fixed order (GPU-free, no API key).
 
-For the revised manuscript, use ``--paper-revision-bundle B --out-root D``; this
-delegates to the verified numerical-bundle workflow documented in PAPER_REPRODUCTION.md.
-The legacy tree workflow described below remains the default.
+For the paper figures, ``--paper-data D --out-root O`` reads prepared numeric tables.
+The released-tree plotting commands below remain available for the other figures.
 
 Each step is a subprocess ``python -m src.scripts.visualizations.<plot>.<gather|plot>`` run from the
 repository root with the interpreter's ``bin/`` on ``PATH``. A failed step is reported and the driver
@@ -70,7 +69,7 @@ ALPHA_CONSUMERS = ("distractor_uniformity", "alpha_bias_vs_stability", "alpha_ne
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--paper-revision-bundle", default=None, help="Reproduce the September 26 revised figures from the numeric bundle; requires --out-root")
+    ap.add_argument("--paper-data", default=None, help="Build paper figures from a directory containing the two numeric tables; requires --out-root")
     ap.add_argument("--only", default=None, help="comma-separated plot names (a subset of PLOTS, kept in order)")
     mode = ap.add_mutually_exclusive_group()
     mode.add_argument("--gather-only", action="store_true", help="run only the gather steps")
@@ -128,13 +127,13 @@ def run_step(cmd: list[str], *, dry_run: bool) -> tuple[bool, float]:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    if args.paper_revision_bundle:
+    if args.paper_data:
         if not args.out_root:
-            raise SystemExit("--paper-revision-bundle requires a fresh --out-root directory")
+            raise SystemExit("--paper-data requires a fresh --out-root directory")
         if args.only or args.gather_only or args.plot_only or args.cueball_dir or args.cache_dir:
-            raise SystemExit("The paper-revision workflow cannot be combined with legacy gather/plot filters or tree paths")
-        from src.scripts.visualizations.paper_revision import main as revision_main
-        return revision_main(["--bundle", args.paper_revision_bundle, "--out-root", args.out_root]
+            raise SystemExit("The paper figure workflow cannot be combined with legacy gather/plot filters or tree paths")
+        from src.scripts.visualizations.paper_figures import main as figures_main
+        return figures_main(["--data", args.paper_data, "--out-root", args.out_root]
                              + (["--dry-run"] if args.dry_run else []))
     plots = select_plots(args.only)
     out_root = Path(args.out_root) if args.out_root else None

@@ -9,7 +9,6 @@ import re
 from typing import Optional
 
 import pandas as pd
-from datasets import load_dataset
 
 from src.lib.constants import EXTENDED_OPTION_LETTERS, OPTION_LETTERS
 
@@ -17,6 +16,13 @@ from src.lib.constants import EXTENDED_OPTION_LETTERS, OPTION_LETTERS
 MMLU_TRAIN_SPLIT = "auxiliary_train"
 
 MMLU_SPLIT_ALIASES: dict[str, str] = {"train": MMLU_TRAIN_SPLIT}
+
+
+def load_dataset(*args, **kwargs):
+    """Load a Hugging Face dataset when a dataset loader is called."""
+    from datasets import load_dataset as hf_load_dataset
+
+    return hf_load_dataset(*args, **kwargs)
 
 
 def _shuffled_option_order(seed: Optional[int], original_index: int, n: int) -> list[int]:

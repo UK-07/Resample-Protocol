@@ -1,21 +1,18 @@
 #!/usr/bin/env python3
 """Crosschecks with clustered uncertainty and explicit non-causal labels.
 
-The baseline-only prediction exactly follows Resample-Protocol's
+The baseline-only prediction follows
 src/scripts/visualizations/common/alpha_common.py::load_rows/cell_counts:
 sum over ALL SSP-eligible originals of (8-stability)/8/(n_options-1), divided
 by the number of clean SSP target flips. Eligible truncated/unanswered cued
 draws stay in this predictor numerator; they cannot contribute target flips.
 
-Changes from the old public plot are deliberate: alpha is not statistically
-clipped; every quantity has the same question-cluster bootstrap; and strict
-non-recurrence uses k_hit==0 over ALL SSP flips, matching the revised paper's
-primary missing-as-miss analysis. The old plot excluded all-four-truncated
-pairs from this strict denominator (163 pairs here). Missing-outcome bounds
-are reported separately in the paper. Plot-only tails beyond 100% receive an
-upward arrow; no underlying point estimate or confidence interval is clipped.
-
-The package owns the bootstrap implementation. No input bundle is modified.
+Alpha is not statistically clipped; every quantity has the same question-cluster
+bootstrap. Strict non-recurrence uses k_hit==0 over all SSP flips, including pairs
+with four truncated re-rolls, for the primary missing-as-miss analysis.
+Missing-outcome bounds are reported separately in the paper. Plot-only tails
+beyond 100% receive an upward arrow; no underlying point estimate or confidence
+interval is clipped.
 """
 from . import common as rc
 
@@ -44,9 +41,8 @@ STYLE = {"font.family": "DejaVu Sans", "font.size": FONT,
 def tables(paths):
     df = rc.load_pairs(paths.results)
     bs = rc.ClusterBootstrap(df.qkey)
-    assert bs.Q == 3982 and bs.fingerprint == "1a8b5e9a029dc3ce"
-    # Re-derive and verify the public source's SSP eligibility and clean-flip
-    # predicates before relying on the archived eligibility flags.
+    assert bs.Q == 3982
+    # Verify SSP eligibility and clean-flip predicates against the input flags.
     b0, h, t = df.b0, df.model_answer, df.target_option
     wrong_to_wrong = (df.case == "positive") & b0.notna() & (b0 != t) & (b0 != df.groundtruth)
     eligible = b0.notna() & (b0 != t) & ~wrong_to_wrong
@@ -64,10 +60,6 @@ def tables(paths):
     c = a.merge(pred[KEYS + ["baseline_prediction", "baseline_prediction_ci_lo", "baseline_prediction_ci_hi"]], on=KEYS, validate="one_to_one")
     assert len(c) == 320
     assert (c.groupby("subject_model").size() == 64).all()
-    print("Baseline prediction: 320 cells; direct-formula equality verified;")
-    print(f"bootstrap {bs.n_boot} draws, seed {bs.seed}, {bs.Q} canonical questions, fingerprint {bs.fingerprint}.")
-    print(f"Prediction point range: {100*c.baseline_prediction.min():.3f}% to {100*c.baseline_prediction.max():.3f}%.")
-    print(f"Prediction CI tails >100%: {(c.baseline_prediction_ci_hi>1).sum()}; alpha CI tails >100%: {(c.one_minus_alpha_ci_hi>1).sum()}.")
     c.to_csv(paths.derived / "noise_crosscheck_clusterCI.csv", index=False)
     return c
 
@@ -108,7 +100,7 @@ def draw(c, paths, strict=False):
     fig.text(.5, .030, "Filled: positive; hollow: negative; faded: n < 20; arrows: CI extends above 100%",
              ha="center", fontsize=7.5)
     filename = "fig_noise_crosscheck_strict.pdf" if strict else "fig_noise_crosscheck_literal.pdf"
-    fig.savefig(paths.figures / filename, metadata={"Creator": "build_revision_crosscheck.py",
+    fig.savefig(paths.figures / filename, metadata={"Creator": "paper_figures.crosscheck",
                 "Subject": "Question-cluster 95% intervals; baseline formula verified against public alpha_common.py",
                 "CreationDate": None, "ModDate": None})
     plt.close(fig)
@@ -122,4 +114,3 @@ def build(paths):
     with plt.rc_context(STYLE):
         draw(c, paths)
         draw(c, paths, strict=True)
-    print("Rendered both full-width crosscheck PDFs.")

@@ -30,6 +30,3 @@ dependencies = [
 
 [tool.setuptools.packages.find]
 include = ["src", "src.*"]
-
-[tool.setuptools.package-data]
-"src.lib.paper_revision" = ["assets/*.json"]

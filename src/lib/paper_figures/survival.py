@@ -7,10 +7,10 @@ stratified by dataset). Intervals are plotted directly, not reconstructed from
 aggregate counts. Recurrence compositions count the four scheduled draws, so
 missing/truncated outcomes remain non-hits in this published view; the manuscript
 reports missingness sensitivity separately. Only ``build(paths)`` reads/writes
-files. It never imports or executes analysis code supplied with the data bundle.
+files.
 
-This is the repository port of the September 26 manuscript renderer. Main width
-is 3.52 inches, appendix width 5.5 inches; render at native size for >=7 pt type.
+Main width is 3.52 inches, appendix width 5.5 inches; render at native size for
+>=7 pt type.
 """
 
 from __future__ import annotations
@@ -66,7 +66,7 @@ def single(rows: list[dict], **keys) -> dict | None:
 
 
 def finish(fig, name: str) -> None:
-    fig.savefig(FIGURES / f"{name}.pdf", metadata={"Title": name, "Creator": "build_revision_survival.py", "CreationDate": None})
+    fig.savefig(FIGURES / f"{name}.pdf", metadata={"Title": name, "Creator": "paper_figures.survival", "CreationDate": None})
     plt.close(fig)
 
 

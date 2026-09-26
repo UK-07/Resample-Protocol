@@ -1,24 +1,21 @@
-"""Recompute the revised paper's figure tables from row-level release data.
+"""Compute paper figure tables from row-level data.
 
-This is a reviewed port of the September 2026 analysis definitions, maintained in
-Resample-Protocol rather than executed from the analysis archive. The only inputs
-are the immutable pairs and re-roll parquet tables. All rates and intervals are
-recalculated here; no aggregate reference CSV is copied into the output.
+Inputs are the pairs and re-roll parquet tables. All rates and intervals are
+calculated here.
 
 Every calculation shares the same stratified question-cluster bootstrap weights.
 The historical ``wilson_*`` columns are retained solely for reference-table
-compatibility; the revised renderers use the question-cluster interval columns.
+compatibility; the renderers use the question-cluster interval columns.
 
 Alpha sign-tail p-values use an integer-scaled contrast numerator. Subtracting two
 rounded bootstrap ratios can move mathematically exact zeros to either side of
 zero, making p-values depend on the BLAS implementation. The rates share one
 positive denominator, so integer numerator signs preserve the intended inclusive
-zero-tail definition exactly. Point estimates and percentile intervals retain
-the archived calculation.
+zero-tail definition exactly. Point estimates and percentile intervals use the
+bootstrap ratios directly.
 """
 from __future__ import annotations
 
-import json
 import math
 from pathlib import Path
 import shutil
@@ -377,7 +374,7 @@ def followup_plot_tables(df, rr, bs, output: Path) -> None:
 
 
 def build(
-    bundle_results: Path,
+    input_results: Path,
     output_results: Path,
     *,
     n_boot: int = rc.N_BOOT,
@@ -385,13 +382,12 @@ def build(
 ) -> dict:
     """Recalculate figure-table families into a separate output directory.
 
-    ``bundle_results`` contains ``pairs_master.parquet`` and
+    ``input_results`` contains ``pairs_master.parquet`` and
     ``rerolls_long.parquet``. The output must be outside that input tree.
     The copied parquet files are unchanged row-level inputs for renderers that
     additionally calculate dose-response and baseline-crosscheck statistics.
-    No archived Python script is imported or executed.
     """
-    source = Path(bundle_results).resolve()
+    source = Path(input_results).resolve()
     destination = Path(output_results).resolve()
     if source == destination or source in destination.parents:
         raise ValueError("Output results must be outside the read-only input results tree")
@@ -415,7 +411,6 @@ def build(
         "n_boot": bs.n_boot,
         "seed": bs.seed,
         "n_questions": bs.Q,
-        "weights_fingerprint": bs.fingerprint,
         "n_pairs": len(df),
         "n_rerolls": len(rr),
         "strata": "dataset",
@@ -423,5 +418,4 @@ def build(
         "alpha_sign_method": ALPHA_SIGN_METHOD,
         "tables": sorted(str(p.relative_to(destination)) for p in destination.rglob("*.csv")),
     }
-    (destination / "recompute_summary.json").write_text(json.dumps(report, indent=2) + "\n")
     return report
