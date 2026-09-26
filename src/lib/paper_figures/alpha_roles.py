@@ -1,8 +1,8 @@
-"""Render the revised alpha and exclusive-role figures from prepared tables.
+"""Render alpha and exclusive-role figures from prepared tables.
 
 All figure inputs are explicit in ``build(paths)``. Missing stability slices are
 recomputed with the package's dataset-stratified question-cluster bootstrap,
-then saved to ``paths.derived``. The supplied bundle is never modified.
+then saved to ``paths.derived``.
 """
 from . import common as rc
 
@@ -34,8 +34,8 @@ STYLE = {"font.family": "DejaVu Sans", "font.size": FONT,
 
 def save(fig, name, paths):
     """Keep physical dimensions fixed; cropping would alter final font size."""
-    fig.savefig(paths.figures / name, metadata={"Creator": "build_revision_alpha_roles.py",
-                "Subject": "Question-cluster bootstrap intervals from revision_analysis, 2026-09-26",
+    fig.savefig(paths.figures / name, metadata={"Creator": "paper_figures.alpha_roles",
+                "Subject": "Question-cluster bootstrap intervals",
                 "CreationDate": None, "ModDate": None})
     plt.close(fig)
 
@@ -212,7 +212,6 @@ def role_by_case(roles, paths):
 def roles_by_stability(paths):
     df = rc.load_pairs(paths.results)
     bs = rc.ClusterBootstrap(df.qkey)
-    assert bs.fingerprint == "1a8b5e9a029dc3ce"
     f = df[df.ssp_flip].copy()
     f["bin"] = f.baseline_stability.astype(int)
     f["category"] = np.where(f.role_label == -1, "incoherent",
@@ -251,4 +250,3 @@ def build(paths):
         role_slices(cue_table, "hint_style", CUES, CUE_LABELS, "fig_false_rejections_by_style.pdf", paths)
         role_by_case(roles, paths)
         roles_by_stability(paths)
-    print("Rendered nine alpha and exclusive-role PDFs.")

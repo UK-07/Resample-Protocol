@@ -1,13 +1,9 @@
-"""Rebuild the revised dose-response figures and auditable clustered tables.
+"""Build dose-response figures and question-cluster bootstrap tables.
 
-The package-owned bootstrap implementation reads immutable label tables.
-Outputs and provenance go to the directories supplied to ``build(paths)``.
+Inputs and output directories are supplied to ``build(paths)``.
 """
 from __future__ import annotations
 
-import hashlib
-import json
-from pathlib import Path
 import numpy as np
 import pandas as pd
 import matplotlib
@@ -25,11 +21,13 @@ COLORS = {"incoherent": "#7B3294", "verification_only": "#0072B2", "rejected": "
 EXPECTED_MINUS1 = dict(zip(style.MODELS, [1448, 1245, 202, 707, 73]))
 
 
-def sha(path):
-    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
-
-
 def build_tables(paths):
+    """Tabulate non-truncated, judged, on-target traces of selected pairs.
+
+    Original and fresh re-roll traces each carry one observation. The denominator
+    includes every retained category except ``none``; incoherent verdicts override
+    emitted roles. Dose is the target-hit count among the four fresh re-rolls.
+    """
     paths.derived.mkdir(parents=True, exist_ok=True)
     pairs_path = paths.results / "pairs_master.parquet"
     rerolls_path = paths.results / "rerolls_long.parquet"
@@ -72,10 +70,9 @@ def build_tables(paths):
     assert incoherent == EXPECTED_MINUS1, (incoherent, EXPECTED_MINUS1)
     used = kept[(kept.rel_role == "used_candidate") & (kept.category != "none")].copy()
 
-    # The same global question frame and shared draws as every archived table.
+    # Use the same question frame and shared draws as the other figure tables.
     bs = rc.ClusterBootstrap(pairs.qkey)
     assert bs.Q == 3982
-    assert bs.fingerprint == "1a8b5e9a029dc3ce", bs.fingerprint
     tables, endpoints = [], []
     for grouping, keys in [("pooled", ["k"]), ("case", ["case", "k"]), ("model_case", ["subject_model", "case", "k"])]:
         for category in CATEGORIES:
@@ -95,25 +92,6 @@ def build_tables(paths):
     pd.DataFrame(endpoints).to_csv(paths.derived / "dose_response_endpoint_differences.csv", index=False)
     raw.groupby(["subject_model", "status"]).size().rename("n").reset_index().to_csv(paths.derived / "dose_response_exclusions.csv", index=False)
     kept.groupby(["subject_model", "category"]).size().rename("n").reset_index().to_csv(paths.derived / "dose_response_all_selected_category_counts.csv", index=False)
-    metadata = {
-        "input_sha256": {p.name: sha(p) for p in [pairs_path, rerolls_path]},
-        "bootstrap_code_sha256": sha(rc.__file__),
-        "builder_sha256": sha(__file__),
-        "population": "Nontruncated judged on-target originals and re-rolls of selected used_candidate pairs; incoherent overrides emitted role; other missing roles excluded.",
-        "denominator": "All kept categories except none, including incoherent regardless of emitted role.",
-        "weighting": "Per rollout (original and each on-target re-roll count once).",
-        "x": "Pair k_hit == qr_k_to_hint_count, of four fresh re-rolls; original excluded from k.",
-        "question_frame": bs.Q, "bootstrap_replicates": bs.n_boot, "seed": bs.seed,
-        "bootstrap_weight_fingerprint": bs.fingerprint,
-        "interval": "95% percentile, canonical questions resampled within dataset; all models, cues and traces together.",
-        "all_selected_incoherent_counts_match_table5": incoherent,
-        "used_mention_rollouts": len(used), "used_mention_pairs": int(used.pair_id.nunique()),
-        "used_mention_questions": int(used.qkey.nunique()),
-        "used_mention_denominators_by_k": {int(k): int(v) for k, v in used.groupby("k").size().items()},
-    }
-    (paths.derived / "dose_response_validation.json").write_text(json.dumps(metadata, indent=2) + "\n")
-    print(json.dumps(metadata, indent=2))
-    print(table[table.grouping == "pooled"].to_string(index=False))
 
 
 def draw_series(ax, data, color, *, offset=0, marker="o", linewidth=.8, markersize=3):

@@ -137,7 +137,32 @@ def lib_provenance() -> dict:
 # Inputs
 # ---------------------------------------------------------------------------
 
-def sources(only: str | None = None, *, cueball: str | Path | None = None) -> list[dict]:
+def resolve_baseline_csv(raw: str | Path, cueball: Path) -> Path:
+    """Resolve a recipe within its release, including sidecars from a moved tree.
+
+    Releases store baselines under ``baselines/``. An old absolute recipe may
+    retain the original machine's prefix; only that documented relative suffix
+    is relocated, and an external file is never read as a fallback.
+    """
+    root = cueball.resolve()
+    recorded = Path(raw)
+    candidate = (recorded if recorded.is_absolute() else root / recorded).resolve()
+    if not candidate.is_relative_to(root):
+        if recorded.parent.name != "baselines":
+            raise ValueError(f"Recipe baseline_csv {raw} is outside the paper tree {root}")
+        candidate = (root / "baselines" / recorded.name).resolve()
+    elif not candidate.is_file() and recorded.parent.name == "baselines":
+        # Also handles an unexpanded ${DATA_ROOT} prefix in an older sidecar.
+        candidate = (root / "baselines" / recorded.name).resolve()
+    if not candidate.is_relative_to(root):
+        raise ValueError(f"Recipe baseline_csv {raw} resolves outside the paper tree {root}")
+    if not candidate.is_file():
+        raise FileNotFoundError(f"Baseline CSV is missing from the release: {candidate}")
+    return candidate
+
+
+def sources(only: str | None = None, *, cueball: str | Path | None = None,
+            models: list[str] | None = None) -> list[dict]:
     """One entry per binary-judged run (smoke runs skipped) with the file names that tie the inputs."""
     cueball_root = P.cueball_dir(cueball)
     out = []
@@ -145,10 +170,10 @@ def sources(only: str | None = None, *, cueball: str | Path | None = None) -> li
         stem = path.name.removesuffix("_binary_judged.csv")
         if SMOKE_RUN_MARKER in stem or (only and only not in stem):
             continue
+        if models is not None and not any(stem.startswith(f"{model}_") for model in models):
+            continue
         recipe = json.loads((P.hinted_dir(cueball_root) / f"{stem}.meta.json").read_text())
-        baseline_csv = Path(recipe["baseline_csv"])
-        if not str(baseline_csv).startswith(str(cueball_root)):
-            raise SystemExit(f"{stem}: recipe baseline_csv {baseline_csv} is outside the paper tree {cueball_root}")
+        baseline_csv = resolve_baseline_csv(recipe["baseline_csv"], cueball_root)
         out.append({"stem": stem, "binary_csv": path, "source_csv": f"{stem}_judged.csv",
                     "baseline_csv": baseline_csv, "baseline_meta": baseline_csv.with_suffix(".meta.json")})
     return out
@@ -366,9 +391,11 @@ def check_flags(df: pd.DataFrame) -> dict:
 # Build (+ cache)
 # ---------------------------------------------------------------------------
 
-def build_rows(only: str | None = None, *, cueball: str | Path | None = None) -> tuple[pd.DataFrame, dict]:
+def build_rows(only: str | None = None, *, cueball: str | Path | None = None,
+               models: list[str] | None = None,
+               collect_metadata: bool = True) -> tuple[pd.DataFrame, dict]:
     cueball_root = P.cueball_dir(cueball)
-    srcs = sources(only, cueball=cueball_root)
+    srcs = sources(only, cueball=cueball_root, models=models)
     if not srcs:
         raise SystemExit("no binary-judged runs matched")
     log(f"{len(srcs)} binary-judged run(s)")
@@ -393,12 +420,15 @@ def build_rows(only: str | None = None, *, cueball: str | Path | None = None) ->
         raise SystemExit(f"unexpected models {models}")
     if not set(styles) <= set(STYLES):
         raise SystemExit(f"unexpected styles {styles}")
+    flag_checks = check_flags(df)
+    if not collect_metadata:
+        return df, {}
     meta = {
         "built_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "only": only, "cueball_dir": str(cueball_root), "lib": lib_provenance(), "sources": [s["stem"] for s in srcs],
         "inputs": input_fingerprint(srcs, cueball=cueball_root, sha=True), "manifest_rows_total": int(n_all),
         "manifest_rows_used": int(len(df)), "models": models, "styles": styles,
-        "join_checks": checks, "flag_checks": check_flags(df),
+        "join_checks": checks, "flag_checks": flag_checks,
         "filters": {"dropped_hint_styles": list(DROPPED_HINTS), "smoke_run_marker": SMOKE_RUN_MARKER,
                     "excluded_models": ["qwen3.6-27b (no binary-judge run)"]},
     }

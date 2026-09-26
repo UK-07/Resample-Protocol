@@ -1,9 +1,11 @@
-"""Shared code for the revision analysis: loaders, the question-cluster bootstrap (10,000 replicates, seed 42,
-questions resampled within dataset, every model / cue / original / re-roll of a question moving together) and
-table helpers, ported from the verified 2026-09-26 RunPod analysis. Input paths are explicit and no data-bundle code is executed. The bootstrap weights are generated once from the
-sorted canonical question list so all comparisons share the same draws."""
+"""Loaders, question-cluster bootstrap, and table helpers for paper figures.
+
+The bootstrap uses 10,000 replicates with seed 42, resampling questions within
+each dataset. Every model, cue, original, and re-roll of a question moves
+together. Weights are generated from the sorted canonical question list so all
+comparisons share the same draws.
+"""
 from __future__ import annotations
-import json, hashlib
 from pathlib import Path
 import numpy as np
 import pandas as pd
@@ -79,7 +81,6 @@ class ClusterBootstrap:
         self.W = W
         self.n_boot = n_boot
         self.seed = seed
-        self.fingerprint = hashlib.sha256(W.tobytes()).hexdigest()[:16]
 
     def per_question(self, df: pd.DataFrame, value: pd.Series) -> np.ndarray:
         """Q-vector of per-question sums of ``value`` (rows of df; df.qkey gives the question)."""
@@ -194,22 +195,3 @@ def plain(t):
 
 def cat(objs, **kw):
     return pd.concat([plain(o) for o in objs], **kw)
-
-
-def md(df: pd.DataFrame, floatfmt: str = "{:.3f}") -> str:
-    cols = list(df.columns)
-    out = "| " + " | ".join(cols) + " |\n|" + "---|" * len(cols) + "\n"
-    for r in df.itertuples(index=False):
-        cells = []
-        for v in r:
-            if isinstance(v, (float, np.floating)):
-                cells.append("" if np.isnan(v) else floatfmt.format(v))
-            else:
-                cells.append(str(v))
-        out += "| " + " | ".join(cells) + " |\n"
-    return out
-
-
-def dump(obj, path: Path):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(obj, indent=1, default=lambda o: float(o) if isinstance(o, (np.floating, np.integer)) else str(o)))

@@ -1,14 +1,25 @@
 # Visualizations
 
-Two reproducible figure workflows are maintained here; neither generates or re-judges rollouts.
+The paper figure command reads the saved labels under `${DATA_ROOT}/cueball`, recomputes
+question-cluster intervals, and renders **30 PDFs and three LaTeX tables** to a fresh directory.
+Install the CPU-only pinned dependencies in `requirements/figures.txt` as described in the
+[repository README](../../../README.md), then run:
 
-- **September 26 manuscript revision:** `make_all --paper-revision-bundle ... --out-root ...`
-  (or `paper_revision --bundle ... --out-root ...`) recomputes 24 reference plotting tables and
-  additional dose-response/crosscheck/stability tables from the verified pair/re-roll records,
-  then renders 33 PDFs and three LaTeX tables. See [PAPER_REPRODUCTION.md](../../../PAPER_REPRODUCTION.md).
-- **Released-tree / legacy figures:** the commands below read `${DATA_ROOT}/cueball` and preserve
-  their original output definitions. [DEFINITIONS.md](DEFINITIONS.md) and each plot's `NOTES.md`
-  document those definitions; the revised counterparts are documented in the revision guide.
+```bash
+python -m src.scripts.visualizations.paper_figures \
+    --cueball-dir '${DATA_ROOT}/cueball' --out-root /path/to/fresh-paper-output --dry-run
+python -m src.scripts.visualizations.paper_figures \
+    --cueball-dir '${DATA_ROOT}/cueball' --out-root /path/to/fresh-paper-output
+```
+
+For prepared numeric tables, replace `--cueball-dir` with `--data /path/to/figure_data`, a directory
+containing `pairs_master.parquet` and `rerolls_long.parquet`. The calculations and renderers live
+in `src/lib/paper_figures/`.
+
+The data-tree figure commands below retain their original definitions, documented in
+[DEFINITIONS.md](DEFINITIONS.md) and each plot's `NOTES.md`. Judge-validation figures are computed
+separately from the validation study's data by `judge_validation_plots.py`. None of these figure
+commands generates or re-judges rollouts.
 
 Run everything as modules from the repository root:
 
@@ -20,7 +31,7 @@ python -m src.scripts.visualizations.paper_plots              # F1–F9         
 python -m src.scripts.visualizations.judge_validation_plots   # J1–J4             -> ${DATA_ROOT}/cueball/plots/judge_validation/
 ```
 
-## Conventions
+## Data-tree conventions
 
 **Inputs** are the released tree under `--cueball-dir` (default `${DATA_ROOT}/cueball`, resolved by `common/paths.py`):
 `hinted_rollouts/rollout_manifest.parquet` (+ `.meta.json`; one row per hinted-once rollout), `resample/`
@@ -53,7 +64,7 @@ sample 0, the one hinted rollout and the binary judge's verdict on it. Under the
 switched (question, cue) pair is re-rolled four times and a `reliance_label` (`robust_used` ≥ 3 of 4 re-rolls
 follow the cue, `weak_used` 1–2, `mixed` 0) plus the re-rolls' own verdicts replace the single draw.
 
-## `paper_plots.py` — the paper's main figures (F1–F9)
+## `paper_plots.py` — data-tree figures (F1–F9)
 
 `python -m src.scripts.visualizations.paper_plots [--cueball-dir D] [--out D] [--only F1,F3c] [--formats pdf,png]`
 reads the two manifests and `question_reliance.csv` and writes every variant as PDF + PNG into `<cueball>/figures/`

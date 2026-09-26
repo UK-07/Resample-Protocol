@@ -88,23 +88,24 @@ the `HINTS` registry in `src/lib/hints.py`; judge prompts are in `configs/llm_ju
 
 ## Reproducing the paper
 
-For the **September 26 revised figures**, use the repository's revision workflow. It recomputes
-plotting tables and question-cluster intervals from the numeric bundle, then writes **33 vector
-PDFs and three LaTeX tables** to a fresh directory. No separate paper checkout, GPU or judge key
-is needed. See [PAPER_REPRODUCTION.md](PAPER_REPRODUCTION.md) for the input checksum, lightweight
-pinned environment, output map and numerical validation.
+The paper figure command reads the saved labels under `${DATA_ROOT}/cueball`, recomputes
+plotting tables and question-cluster intervals, and writes **30 vector PDFs and three LaTeX
+tables** to a fresh output directory. Use the CPU-only pinned environment; no generation,
+GPU or judge key is needed:
 
 ```bash
-python -m src.scripts.visualizations.make_all \
-    --paper-revision-bundle /path/to/revision_analysis_bundle_2026-09-26.tar.gz \
-    --out-root /path/to/fresh-paper-output --dry-run
-python -m src.scripts.visualizations.make_all \
-    --paper-revision-bundle /path/to/revision_analysis_bundle_2026-09-26.tar.gz \
-    --out-root /path/to/fresh-paper-output
+python3.12 -m venv .venv-figures
+source .venv-figures/bin/activate
+python -m pip install -r requirements/figures.txt
+python -m src.scripts.visualizations.paper_figures \
+    --cueball-dir '${DATA_ROOT}/cueball' --out-root /path/to/fresh-paper-output --dry-run
+python -m src.scripts.visualizations.paper_figures \
+    --cueball-dir '${DATA_ROOT}/cueball' --out-root /path/to/fresh-paper-output
 ```
 
-The following pipeline commands reproduce the underlying released tree and retained legacy
-figures. They do not replace the revision workflow above for the new cluster-interval figures.
+For prepared numeric tables, replace `--cueball-dir` with `--data /path/to/figure_data`, a directory
+containing `pairs_master.parquet` and `rerolls_long.parquet`. Generation, judging and the
+data-tree figure commands are described below.
 
 The paper evaluates the five models above on CommonsenseQA, MedQA, GPQA-Extended and
 MMLU-Pro-1000. `configs/cueball/` contains one `run_pipeline_<model>_<dataset>.yaml` per cell,
@@ -172,46 +173,42 @@ studies. The alpha-implied noise share is compared with non-recurrence and non-p
 different quantities; it does not identify individual causal reliance.
 
 SSP uses baseline sample 0 and a binary judge on original flips; RSP uses the role judge on
-on-target re-rolls from persistent pairs. The September 26 manuscript revision separates judge,
-persistence-filter, trace, population and weighting changes with matched IDs and paired
-question-cluster intervals (10,000 replicates, seed 42, questions resampled within dataset).
+on-target re-rolls from persistent pairs. The analysis separates judge, persistence-filter, trace,
+population and weighting changes with matched IDs and paired question-cluster intervals
+(10,000 replicates, seed 42, questions resampled within dataset).
 On 65,752 shared originals, binary and role unfaithfulness are 8.590% and 9.804%. Holding the
 judge and pair weights fixed, replacing persistent-pair originals with fresh re-rolls changes
 the rate from 8.406% to 8.542%: +0.136 percentage points [−0.049, 0.320]. Full-pool RSP rates
 are 9.130% with re-roll weighting and 9.352% with equal-pair weighting.
 
-The revised manuscript's survival, alpha, role, dose-response, rate and yield figures and
-benchmark tables use question-cluster intervals. The separate judge audit retains its stated
-Wilson spot-check and stratified-bootstrap intervals. The revised figure builders and
-question-cluster calculations are maintained here under `src/lib/paper_revision/`, with the thin
-`src.scripts.visualizations.paper_revision` CLI and the `make_all --paper-revision-bundle`
-entry point; the three judge plots redraw the supplied audit summary. The original data-tree
-plotting modes remain available for historical outputs and
-retained legacy figures.
+The survival, alpha, role, dose-response, rate and yield figures and benchmark tables use
+question-cluster intervals. Their calculations and renderers live in `src/lib/paper_figures/`,
+with the `src.scripts.visualizations.paper_figures` CLI. The separate judge-validation study
+retains its stated Wilson spot-check and stratified-bootstrap intervals; its figures are
+generated from the validation data by `judge_validation_plots.py`. The data-tree plotting
+modules retain their original definitions.
 
 Remaining limitations include the baseline/cued decoding mismatch and missing structured
 roles on 18,972 originals. Production persistence still treats truncated or unparseable
-re-rolls as misses; the manuscript now reports effective-k, complete-four sensitivity and
+re-rolls as misses; the manuscript reports effective-k, complete-four sensitivity and
 full-population missing-answer bounds. Positive SSP-unfaithful survival lies between 59.70%
 and 65.63% under those bounds. Complete-case estimates describe selected subsets rather than
 correcting missingness. `post_hoc` is reported separately as instructed justification:
 excluding it lowers positive survival to 54.8% and pooled RSP unfaithfulness to 5.67%.
 The primary judge audit covers one model and dataset; its inter-LLM agreement does not measure
 human-label accuracy or independently validate incoherence or the separate SSP binary judge.
-No new model generations or judge runs were performed for this reanalysis.
 
 The five-model release contains 20,000 unfaithful or incoherent re-rolls (1,223 incoherent)
 from 9,997 source pairs and 2,610 canonical questions. The 1,995 strict clean pairs used in the
 cost funnel form a different subset. Train/validation/test contain 13,886/2,962/3,152 traces,
 6,941/1,501/1,555 source pairs and 1,810/397/403 questions; no question or source pair crosses
-splits. These counts were checked by independently aggregating the archived label records.
+splits. These counts come from the saved label records.
 
 ## Reproducibility of the released tree
 
-The initial release documented these checks on the **six-model tree** (24 cells), with all
-regeneration performed in a scratch copy. They are historical reproduction results, not a new
-validation of the revised five-model manuscript. Figure-byte equality predates the subsequent
-judge-plot correction:
+The following checks cover the **six-model tree** (24 cells), with regeneration performed in a
+scratch copy. They do not validate the five-model paper figure command above, and the
+31-figure byte-equality comparison does not cover the current judge-validation figures:
 
 | artifact | result |
 | --- | --- |
@@ -241,7 +238,6 @@ src/lib/                    the shared library — the single source of truth ev
 configs/                    per-model bases, the release grid (cueball/), the reference pipeline config, judge prompts, probe specs
 tests/                      stdlib unittest, one <module>_test.py per source file, GPU/network mocked
 DATA.md                     the released data tree: layout, provenance, what to ship and what to leave out
-AGENTS.md, CLAUDE.md, .claude/skills/cueball/   guidance for agents using or working on the repo
 ```
 
 Key library modules: `hints.py` (the cue styles and their judge-facing excerpts), `parsing.py`

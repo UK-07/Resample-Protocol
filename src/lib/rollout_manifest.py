@@ -19,6 +19,7 @@ from typing import Callable
 import numpy as np
 import pandas as pd
 
+from src.lib.constants import CASES, SPLITS
 from src.lib.hinted_rollouts import (
     compute_sensitivity_flags,
     row_reasoning,
@@ -36,8 +37,6 @@ OVERRIDE_COLUMNS = [
     "judge_role_final", "hint_quote_final", "override_reason", "judged_utc",
 ]
 
-CASES = ("positive", "negative")
-SPLITS = ("train", "val", "test")
 # Precedence order: a row gets the first reason that applies (question- and
 # source-level reasons before row-level ones).
 EXCLUDE_REASONS = (

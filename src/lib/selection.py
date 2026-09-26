@@ -16,7 +16,7 @@ from typing import Callable
 
 import pandas as pd
 
-from src.lib.rollout_manifest import CASES, SPLITS
+from src.lib.constants import CASES, SPLITS
 
 HINTED_ONCE = "hinted_once"
 RESAMPLE_K4 = "resample_k4"
