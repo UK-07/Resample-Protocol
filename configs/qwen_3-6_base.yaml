@@ -1,0 +1,50 @@
+# Shared defaults for Qwen3.6-27B pipeline configs.
+#
+# A config inherits these by declaring `extends: qwen_3-6_base.yaml` on its
+# first line; any key it also sets overrides the base (nested dicts merge,
+# scalars/lists replace). Inheritance is one level deep — this file must not
+# itself declare `extends`.
+
+model_name: "Qwen/Qwen3.6-27B"
+seed: 42
+# Sampling truncation is not a per-model knob: every sampling stage (baseline
+# consistency samples, hinted rollouts, re-sampling, judge sweeps) uses the
+# shared top_p 0.95 / top_k 20 from src/lib/config.py unless a run config sets
+# `top_p:` / `top_k:` explicitly.
+
+# Chain-of-thought on/off. Qwen3.6 is a native reasoner (it emits <think>…</think>
+# when enable_thinking=True) and can also run without thinking, in which case the
+# plain answer-only system prompt is used and no reasoning block is requested.
+#
+# NOTE: YAML 1.1 parses unquoted `on`/`off` as booleans — that is fine, both the
+# bare and quoted forms are accepted. Omit the key to use the model default (on).
+# `thinking` is a resume-identity field for compute_baseline: a thinking-off run
+# cannot append to a thinking-on CSV. collect_probe_activations requires thinking on.
+thinking: on
+
+# Inference knobs shared by every vLLM script (the HF-path
+# collect_probe_activations.py replays stored rollouts and generates nothing,
+# so it reads none of them).
+#   max_model_len — vLLM context window; must cover the longest prompt +
+#                   max_tokens (unused on the HF path).
+#   max_tokens    — generation budget (vLLM SamplingParams / HF max_new_tokens).
+#   max_num_seqs  — cap on concurrent vLLM decode sequences. Qwen3.6 is a
+#                   hybrid Mamba (gated-delta-net) model: each sequence needs
+#                   one Mamba cache block, and vLLM >= 0.26 aborts at startup
+#                   when the cap exceeds the blocks the memory budget allows
+#                   (~310 for 27B weights at 0.9 util on an 80 GB GPU, vs
+#                   vLLM's default cap of 1024). 256 keeps batching throughput
+#                   while fitting that budget; extra prompts just queue.
+inference:
+  max_model_len: 16384
+  max_tokens: 8192
+  gpu_memory_utilization: 0.9
+  tensor_parallel_size: 1
+  max_num_seqs: 256
+
+# Residual-stream layers to capture (collect_probe_activations.py; a collector
+# config may override the list for its store). Qwen3.6-27B has 64
+# decoder layers and a hidden size of 5120; this samples every 1/16 of the depth.
+# collect_probe_activations validates the model's actual depth and residual width
+# before generating, so a list scaled for another model fails immediately.
+layers: [3, 7, 11, 15, 19, 23, 27, 31, 35, 39, 43, 47, 51, 55, 59, 63]

@@ -1,0 +1,41 @@
+# Shared defaults for Gemma-4-12B-it pipeline configs.
+#
+# A config inherits these by declaring `extends: gemma_4-12b_base.yaml` on its
+# first line; any key it also sets overrides the base (nested dicts merge,
+# scalars/lists replace). Inheritance is one level deep — this file must not
+# itself declare `extends`.
+
+model_name: "google/gemma-4-12B-it"
+seed: 42
+# Sampling truncation is not a per-model knob: every sampling stage (baseline
+# consistency samples, hinted rollouts, re-sampling, judge sweeps) uses the
+# shared top_p 0.95 / top_k 20 from src/lib/config.py unless a run config sets
+# `top_p:` / `top_k:` explicitly.
+
+# Chain-of-thought on/off. Gemma 4 is a native reasoner, but the CHECKPOINT
+# defaults to thinking OFF — passing enable_thinking=True is what injects the
+# <|think|> token into the system turn. This pipeline studies CoT, so thinking
+# is on here. Gemma 4 delimits its reasoning with <|channel>thought … <channel|>
+# (NOT <think> tags); that pair is registered in src/lib/model_utils.py and
+# drives every parser, so do not try to elicit <think> tags via the prompt.
+#
+# NOTE: YAML 1.1 parses unquoted `on`/`off` as booleans — both forms are fine.
+# `thinking` is a resume-identity field for compute_baseline; collect_probe_activations
+# requires it on.
+thinking: on
+
+# Inference knobs shared by every vLLM script (the HF-path
+# collect_probe_activations.py replays stored rollouts and generates nothing,
+# so it reads none of them).
+inference:
+  max_model_len: 16384
+  max_tokens: 8192
+  gpu_memory_utilization: 0.9
+  tensor_parallel_size: 1
+
+# Residual-stream layers to capture (collect_probe_activations.py; a collector
+# config may override the list for its store). The 12B's
+# text_config declares 48 decoder layers and a hidden size of 3840; this samples
+# every 1/16 of the depth, mirroring the 27B's coverage. collect_probe_activations
+# validates depth and residual width before generating.
+layers: [2, 5, 8, 11, 14, 17, 20, 23, 26, 29, 32, 35, 38, 41, 44, 47]

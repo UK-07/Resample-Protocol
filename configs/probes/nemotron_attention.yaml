@@ -1,0 +1,50 @@
+# Attention probe over the CoT-span residual stream, leave-one-hint-out (T9e).
+#   uv run python -m src.scripts.train_probe --config configs/probes/nemotron_attention.yaml --dry-run
+#   uv run python -m src.scripts.train_probe --config configs/probes/nemotron_attention.yaml
+extends: nemotron_probe_local.yaml   # model (the local mirror of the shared store), dataloader, output.dir
+
+# The attention probe reads the SEQ files (seq_layer_<L>_partNN, the whole
+# CoT-span residual stream): ≈ 800 GB per layer of the shared store, so the
+# mirror holds ONE layer (`mirror_probe_store.py --layers 31`) and this list
+# must stay within the mirror's `mirrored_layers`. Disk / epoch budget: one
+# mirrored layer ≈ 800 GB on the pod's NVMe, and one full pass over the
+# training rows ≈ 800 GB ≈ 10 min from NVMe (every epoch of every trial
+# re-reads it; 20 epochs × 4 trials × 8 folds is the upper bound, early
+# stopping cuts it). A second layer doubles both — mirror it explicitly.
+model:
+  layers: [31]
+
+dataset:
+  path: ${DATA_ROOT}/probe_datasets/nemotron-nano-9b-v2_verbalised_vs_unverbalised.parquet
+  folds: null                 # null = one fold per hint style in the dataset; or a list of held-out styles
+  cases: both                 # training rows: both | positive | negative (the test sets keep every case)
+
+probe:
+  type: attention
+  heads: 4                    # 1 = the Kantamneni / Reasoning Theater probe
+  aggregation: softmax        # softmax | rolling_max (swept below)
+  window: 16                  # rolling_max window (tokens)
+  position_bias: true         # learned per-head slope on the relative position
+  standardize: true           # per-dimension mean / std from the training tokens, stored in the probe
+  norm_tokens: 500000         # tokens sampled for the standardisation statistics
+
+training:
+  epochs: 20
+  batch_size: 16              # row cap per batch
+  max_batch_tokens: 65536     # padded tokens per batch (batch × longest sample)
+  lr: 0.001
+  weight_decay: 0.01
+  min_prefix_frac: 0.1        # random CoT prefixes in [0.1·L, L] while training
+  grad_clip: 1.0
+  patience: 5
+  class_weighting: balanced
+  seed: 42
+
+# Grid (D23): every list is swept (Cartesian product), the best trial per unit
+# is picked by validation AUROC. 2 × 2 = 4 trials.
+search:
+  lr: [0.0003, 0.001]
+  aggregation: [softmax, rolling_max]
+
+output:
+  run_name: nemotron_attention

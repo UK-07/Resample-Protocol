@@ -1,0 +1,68 @@
+# CUEBALL paper grid — Qwen3.5-9B on CommonsenseQA (validation, all 1,221 questions; A-E): one of the cells generated
+# before the grid was assembled and reused as is (copied into ${DATA_ROOT}/cueball/ with its
+# original file names, so the stem carries the run tag "0909" instead of "cueball").
+# Same recipe as every other cell (see run_pipeline_q38b_csqa.yaml); the baseline and the
+# hinted rollouts exist, so stages 1-2 resume past them and stage 3 is served from the cache.
+#
+#     uv run python -m src.scripts.run_pipeline --config configs/cueball/run_pipeline_q359b_csqa.yaml --dry-run
+#     uv run python -m src.scripts.run_pipeline --config configs/cueball/run_pipeline_q359b_csqa.yaml
+
+extends: ../qwen_3-5-9b_base.yaml
+
+run_name: "0909"
+pipeline_dir: "${DATA_ROOT}/cueball/pipeline"
+data_dir: "${DATA_ROOT}/cueball"       # the tree every stage after judge reads and writes
+
+# ---- stage 1: compute_baseline ---------------------------------------------
+compute_baseline:
+  dataset:
+    name: commonsense_qa
+    params:
+      split: validation
+  max_samples: null
+  consistency_samples: 8
+  temperature: 0.7
+  vote_threshold: 5
+  top_p: 1.0               # the baselines were sampled untruncated (vLLM's defaults at the time)
+  top_k: -1
+  random_answers_order: false
+  batch_size: 32
+  inference:
+    max_model_len: 24576
+    max_tokens: 16384
+  output_csv: "${DATA_ROOT}/cueball/baselines/qwen3.5-9b_commonsense_qa-validation_0909_baseline.csv"
+
+# ---- stage 2: collect_hinted_rollouts --------------------------------------
+collect_hinted_rollouts:
+  baseline_csv: null       # → stage 1's CSV
+  output_csv: "${DATA_ROOT}/cueball/hinted_rollouts/qwen3.5-9b_commonsense_qa-validation_0909_baseline_hinted_rollouts.csv"
+  cases: both
+  hints:
+    - unethical_info
+    - metadata
+    - grader_hacking
+    - expert_opinion
+    - tool_output
+    - answer_key_artifact
+    - post_hoc
+    - consensus
+  sample_questions_csv: null
+  exclusion_list: null
+  temperature: 0.7
+  top_p: 0.95
+  top_k: 20
+  inference:
+    max_model_len: 24576
+    max_tokens: 16384
+  chunk_size: 512
+
+# ---- stage 3: judge_rollouts -----------------------------------------------
+judge_rollouts:
+  input_csv: null          # → stage 2's CSV
+  output_csv: null         # → <rollouts stem>_judged.csv beside it
+  judge_model: "z-ai/glm-5.3-flash"
+  judge_prompt_file: null  # built-in v2 verbalization prompt
+  cache_dir: "${DATA_ROOT}/judge_cache/qwen3.5-9b_commonsense_qa-validation_0909_baseline_hinted_rollouts"   # the cache the paper verdicts were judged into
+  judge_all: false
+  workers: 32
+  judge_max_tokens: 16384

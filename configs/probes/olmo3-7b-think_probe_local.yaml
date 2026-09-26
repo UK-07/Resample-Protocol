@@ -1,0 +1,55 @@
+# Per-model base of the probe-training configs (src/scripts/train_probe.py)
+# for Olmo-3-7B-Think over the LOCAL MIRROR of its shared activation store —
+# what every training run on the pod reads. `olmo3-7b-think_linear.yaml` /
+# `olmo3-7b-think_attention.yaml` / `olmo3-7b-think_tfidf.yaml` `extends:` this file
+# (the tfidf one drops the model block with `model: null`). Modelled on
+# nemotron_probe_local.yaml; the store's collector-side identity is
+# configs/collect_probe_activations_olmo.yaml (`storage` + `store_folder`).
+#
+# The mirror is written by
+#     uv run python -m src.scripts.mirror_probe_store \
+#         --config configs/collect_probe_activations_olmo.yaml \
+#         --dest /root/probe_activations_mirror --layers 18
+# (points of every layer ≈ 12 GB, plus ≈ 0.8 TB of seq files per mirrored
+# layer; --layers must stay within the store's `seq_layers` [9, 18, 27] —
+# the collector wrote seq files for those only). `local_dir` is a POD-LOCAL
+# path on purpose, not `${DATA_ROOT}`: the mirror is a multi-hundred-GB copy
+# that sits on the pod's own container disk and is thrown away with the pod.
+#
+# `model:` is FORBIDDEN for the TF-IDF probe (it reads no activations): the
+# tfidf config sets `model: null`, which load_config's merge replaces wholesale.
+# Inheritance is one level (load_config), so this file carries every block.
+
+model:
+  subject_model: olmo3-7b-think
+  # A make_backend block (src/lib/activation_store.py) plus `folder`: the store
+  # folder under `local_dir` — the mirror of the SHARED store `olmo3-7b-think_shared`
+  # (collect_probe_activations_olmo.yaml's `store_folder`). The trainer
+  # requires every fold id to be in the store, not the same dataset
+  # fingerprint. The HF keys are null for backend: local.
+  activations:
+    backend: local
+    local_dir: /root/probe_activations_mirror
+    hf_repo_id: null
+    revision: null
+    folder: olmo3-7b-think_shared
+  # Layers to probe: must be a subset of what the MIRROR holds for the file
+  # kind the probe reads — the meta's `mirrored_points_layers` for the linear
+  # probe (every stored layer when the points were mirrored), `mirrored_layers`
+  # for the attention probe (the `--layers` given to the mirror, themselves
+  # within the store's `seq_layers`). Each probe config sets its own list;
+  # this default is the linear probe's — the 7 layers of the store
+  # (32 decoder blocks, hidden 4096).
+  layers: [9, 13, 15, 18, 20, 22, 27]
+
+# The sequence adapter's DataLoader (attention probe only): every worker reads
+# its own sample from the mmap'd local files, `fetch_threads` layers at a time.
+# Host RAM ≈ (num_workers × prefetch_factor + 1) × max_batch_tokens × layers ×
+# hidden × 2 B; `--dry-run` prints the estimate next to the container's cgroup limit.
+dataloader:
+  num_workers: 8
+  fetch_threads: 4
+  prefetch_factor: 2
+
+output:
+  dir: ${DATA_ROOT}/trained_probes/probes

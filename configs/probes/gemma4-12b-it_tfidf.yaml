@@ -1,0 +1,61 @@
+# TF-IDF + logistic-regression probe on the normalised CoT text for
+# Gemma-4-12B-it (GPU-free apart from the tiny sparse logistic regression).
+#   uv run python -m src.scripts.train_probe --config configs/probes/gemma4-12b-it_tfidf.yaml --dry-run
+#   uv run python -m src.scripts.train_probe --config configs/probes/gemma4-12b-it_tfidf.yaml --device cpu
+extends: gemma4-12b-it_probe_local.yaml   # output.dir (and a dataloader block the sparse adapter ignores)
+
+# The TF-IDF probe reads no activations, and parse_train_config REFUSES a
+# `model:` block for it — the base's block is dropped here (load_config's merge
+# replaces a key wholesale when the child sets a scalar, null included).
+model: null
+
+dataset:
+  path: ${DATA_ROOT}/probe_datasets/gemma4-12b-it_verbalised_vs_unverbalised.parquet
+  folds: null
+  cases: both
+
+probe:
+  type: tfidf
+  # spaCy normalisation of `reasoning` (src/lib/text_features.py); the output
+  # settings + the spaCy / model versions fingerprint the shared cache file
+  # `<cache_dir>/<dataset name>__<fingerprint>.parquet`. n_process / batch_size
+  # are pod settings — on an 8 GB box use n_process: 1.
+  text:
+    lowercase: true
+    remove_stopwords: true
+    lemmatize: true
+    spacy_model: en_core_web_sm
+    min_token_chars: 2
+    keep_numbers: false
+    n_process: 4
+    batch_size: 64
+    cache_dir: ${DATA_ROOT}/probe_datasets/text_cache
+  # TfidfVectorizer fitted on each fold's TRAINING rows only (D16).
+  vectorizer:
+    ngram_range: [1, 2]
+    min_df: 5
+    max_df: 1.0
+    max_features: 100000
+    sublinear_tf: true
+    norm: l2
+    binary: false
+
+# weight_decay is the L2 penalty of the logistic regression (sklearn's
+# C = 1 / (weight_decay · n_train)); max_batch_tokens does not apply.
+training:
+  epochs: 20
+  batch_size: 256
+  lr: 0.001
+  weight_decay: 0.001
+  grad_clip: 1.0
+  patience: 5
+  class_weighting: balanced
+  seed: 42
+
+# 2 × 3 = 6 trials.
+search:
+  lr: [0.001, 0.003]
+  weight_decay: [0.0001, 0.001, 0.01]
+
+output:
+  run_name: gemma4-12b-it_tfidf

@@ -1,0 +1,57 @@
+# Shared defaults for NVIDIA-Nemotron-Nano-9B-v2 pipeline configs.
+#
+# A config inherits these by declaring `extends: nemotron_nano-9b_base.yaml` on
+# its first line; any key it also sets overrides the base (nested dicts merge,
+# scalars/lists replace). Inheritance is one level deep — this file must not
+# itself declare `extends`.
+
+model_name: "nvidia/NVIDIA-Nemotron-Nano-9B-v2"
+seed: 42
+# Sampling truncation is not a per-model knob: every sampling stage (baseline
+# consistency samples, hinted rollouts, re-sampling, judge sweeps) uses the
+# shared top_p 0.95 / top_k 20 from src/lib/config.py unless a run config sets
+# `top_p:` / `top_k:` explicitly.
+
+# Chain-of-thought on/off. Nemotron Nano v2 is a native reasoner whose chat
+# template pre-injects "<think>" into the generation prompt; the model closes
+# the block with "</think>", so the default <think>/</think> delimiters apply
+# and the rollout text carries the CLOSE delimiter but not the open one (every
+# consumer handles that — see src/lib/parsing.py::extract_cot).
+#
+# IMPORTANT: this checkpoint's template IGNORES `enable_thinking`. It toggles
+# thinking from a `/think` or `/no_think` directive inside the system/user text,
+# which nothing in this pipeline writes. `thinking: off` is therefore REFUSED
+# for this model (src/lib/model_utils.py::get_thinking_config) instead of
+# silently producing thinking rollouts under the answer-only system prompt.
+thinking: on
+
+# Inference knobs shared by every vLLM script (the HF-path
+# collect_probe_activations.py replays stored rollouts and generates nothing,
+# so it reads none of them).
+#   max_model_len — vLLM context window; must cover the longest prompt +
+#                   max_tokens (unused on the HF path).
+#   max_tokens    — generation budget (vLLM SamplingParams / HF max_new_tokens).
+#   max_num_seqs  — cap on vLLM's concurrent decode sequences. Nemotron Nano v2
+#                   is a HYBRID MAMBA model (NemotronHForCausalLM): it needs one
+#                   Mamba cache block per sequence, and vLLM >= 0.26 aborts at
+#                   startup when the cap exceeds the memory budget's block
+#                   count. Pinned to 256, as on the Qwen3.6-27B base, rather
+#                   than left at vLLM's default of 1024.
+inference:
+  max_model_len: 16384
+  max_tokens: 8192
+  gpu_memory_utilization: 0.9
+  tensor_parallel_size: 1
+  max_num_seqs: 256
+
+# Residual-stream layers to capture (collect_probe_activations.py; a collector
+# config may override the list for its store). Nemotron Nano v2
+# has 56 blocks and a hidden size of 4480; this samples 16 of them evenly across
+# the depth, mirroring the coverage of the Qwen and Gemma bases.
+# NOTE: the block stack is heterogeneous (Mamba-2, attention and MLP blocks, per
+# the checkpoint's hybrid_override_pattern) — the residual stream is 4480-wide at
+# every one of them, so an evenly spaced index list is still meaningful, but a
+# layer's index says nothing about which block type produced it.
+# collect_probe_activations validates the model's actual depth before generating, so a
+# list scaled for another model fails immediately.
+layers: [0, 4, 7, 11, 15, 18, 22, 26, 29, 33, 37, 40, 44, 48, 51, 55]

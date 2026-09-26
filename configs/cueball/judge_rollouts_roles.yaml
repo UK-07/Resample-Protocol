@@ -1,0 +1,23 @@
+# CUEBALL paper grid — re-judge a reused run into a FRESH cache so every verdict carries
+# the judge's `hint_role` / `hint_quote` (the paper's second label axis).
+#
+# Why: the four reused non-Nemotron runs (Qwen3.5-9B csqa / medqa / gpqa-extended,
+# Qwen3-8B medqa) were judged before 2026-09-13, when the cache started keeping the
+# role — 85 of their 19,182 verdicts have one; Nemotron's were all re-judged on 09-17.
+# Same judge, same prompt, same inputs; only the cache directory differs, because the
+# shared cache would serve the role-less records. ~$30-50 for the four files.
+#
+#     uv run python -m src.scripts.judge_rollouts --config configs/cueball/judge_rollouts_roles.yaml \
+#         --input '${DATA_ROOT}/cueball/hinted_rollouts/<stem>_hinted_rollouts.csv' \
+#         --cache-dir '${DATA_ROOT}/cueball/judge_cache/<stem>_hinted_rollouts'
+# (the four full commands are in configs/cueball/README.md)
+
+input_csv: null            # --input
+output_csv: null           # → <input stem>_judged.csv beside it (replaces the copied one)
+judge_model: "z-ai/glm-5.3-flash"
+judge_prompt_file: null    # built-in v2 verbalization prompt
+model_name: null
+cache_dir: null            # --cache-dir (a fresh directory under ${DATA_ROOT}/cueball/judge_cache/)
+judge_all: false
+workers: 32
+judge_max_tokens: 16384

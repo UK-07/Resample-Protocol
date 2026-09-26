@@ -1,0 +1,59 @@
+# Shared defaults for Olmo-3-7B-Think pipeline configs.
+#
+# A config inherits these by declaring `extends: olmo_3-7b-think_base.yaml` on
+# its first line; any key it also sets overrides the base (nested dicts merge,
+# scalars/lists replace). Inheritance is one level deep — this file must not
+# itself declare `extends`.
+
+model_name: "allenai/Olmo-3-7B-Think"
+seed: 42
+# Sampling truncation is not a per-model knob: every sampling stage (baseline
+# consistency samples, hinted rollouts, re-sampling, judge sweeps) uses the
+# shared top_p 0.95 / top_k 20 from src/lib/config.py unless a run config sets
+# `top_p:` / `top_k:` explicitly.
+
+# Chain-of-thought on/off. Olmo 3 Think is a native reasoner whose chat template
+# pre-injects "<think>" into the generation prompt; the model closes the block
+# with "</think>", so the default <think>/</think> delimiters apply and the
+# rollout text carries the CLOSE delimiter but not the open one (every consumer
+# handles that — see src/lib/parsing.py::extract_cot).
+#
+# IMPORTANT: this checkpoint has no non-thinking mode — its template ignores
+# `enable_thinking` and always opens the block. `thinking: off` is therefore
+# REFUSED for this model (src/lib/model_utils.py::get_thinking_config) instead
+# of silently producing thinking rollouts under the answer-only system prompt.
+# The non-reasoning sibling is a different checkpoint, allenai/Olmo-3-7B-Instruct.
+thinking: on
+
+# Inference knobs shared by every vLLM script (the HF-path
+# collect_probe_activations.py replays stored rollouts and generates nothing,
+# so it reads none of them).
+#   max_model_len — vLLM context window; must cover the longest prompt +
+#                   max_tokens (unused on the HF path). The checkpoint's own
+#                   max_position_embeddings is 65,536, so 32,768 is comfortably
+#                   inside it.
+#   max_tokens    — generation budget (vLLM SamplingParams / HF max_new_tokens).
+# The budget is DELIBERATELY larger than the repo-standard 16,384 / 8,192 of the
+# other bases: Olmo 3 Think reasons ~3x longer than Qwen/Nemotron, and a
+# 20-question MMLU-Pro smoke at 16,384 tokens already truncated 14% of rollouts
+# (a truncated rollout has no close delimiter, parses as "unanswered" and drops
+# out of the judged sample — exactly the longest chains of thought). Since
+# `max_tokens` is part of the generation identity, a config that extends this
+# base without overriding it must not silently inherit a budget known to be
+# too small. The pipeline configs restate the same values explicitly.
+# max_num_seqs is deliberately unset (vLLM's default): Olmo 3 is a dense
+# transformer, not a hybrid-Mamba model, so it has no per-sequence cache blocks
+# to bound.
+inference:
+  max_model_len: 32768
+  max_tokens: 24576
+  gpu_memory_utilization: 0.9
+  tensor_parallel_size: 1
+
+# Residual-stream layers to capture (collect_probe_activations.py; a collector
+# config may override the list for its store). Olmo-3-7B has 32
+# decoder layers and a hidden size of 4096 — the same shape as Qwen3.5-9B, so
+# this uses the same every-other-layer coverage. collect_probe_activations validates
+# the model's actual depth before generating, so a list scaled for another model
+# fails immediately.
+layers: [1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31]

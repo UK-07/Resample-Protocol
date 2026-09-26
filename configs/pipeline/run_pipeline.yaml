@@ -1,0 +1,244 @@
+# Pipeline config for src/scripts/run_pipeline.py — ONE model × ONE dataset (a "cell"), plus
+# the tree-level stages over the data tree the cell writes into.
+#
+#   python -m src.scripts.run_pipeline --config configs/pipeline/run_pipeline.yaml --dry-run
+#   python -m src.scripts.run_pipeline --config configs/pipeline/run_pipeline.yaml
+#   python -m src.scripts.run_pipeline --config ... --stages baseline,rollouts     # GPU box
+#   python -m src.scripts.run_pipeline --config ... --stages judge                 # judge key only
+#
+# Stages, fixed order (default = 1-10; 11-14 run only when named in `stages:` / --stages):
+#    1 baseline         compute_baseline                          GPU
+#    2 rollouts         collect_hinted_rollouts                   GPU
+#    3 judge            judge_rollouts                            OPENROUTER_API_KEY
+#    4 manifest         build_rollout_manifest
+#    5 resample_select  select_resample_set
+#    6 rerolls          resample_hinted_rollouts                  GPU
+#    7 judge_rerolls    batch_judge_rollouts                      OPENROUTER_API_KEY
+#    8 relabel          resample_noise_model + resample_relabel
+#    9 summary          unfaithfulness_metrics_summary + verify_manifest
+#   10 figures          paper_plots
+#   11 splits           assign_splits
+#   12 probe_dataset    build_probe_dataset (one spec per predicate)
+#   13 activations      collect_probe_activations                 GPU
+#   14 train_probe      train_probe (one run per entry)           GPU (tfidf: CPU)
+#
+# One section per stage script, named after it: the script's own config keys (config-style
+# scripts) or its CLI flags as snake_case keys (flag-style scripts). Every section is optional,
+# unknown keys are rejected, null = the default. Default paths derive from `data_dir` and the
+# cell stem <model short>_<dataset tag>[_<run_name>]; explicit path keys win. Secrets
+# (OPENROUTER_API_KEY, HF_TOKEN) come from the .env file / environment, never from a config.
+# Every stage resumes: rerun the same command after an interruption.
+
+# ---- shared by every stage ---------------------------------------------------
+# model_name, seed, thinking and the inference block come from the per-model base
+# (configs/<model>_base.yaml). --model swaps only model_name.
+extends: ../qwen_3-5-9b_base.yaml
+
+# Extra tag in the cell stem (a subject filter or max_samples cap is not in the dataset tag).
+run_name: null
+# The data tree: every default path lands under it (the paper tree is "${DATA_ROOT}/cueball").
+data_dir: "${DATA_ROOT}"
+# Run records + generated per-stage configs. null → <data_dir>/pipeline
+pipeline_dir: null
+# Stages to run, in the fixed order above. null → the default ten (1-10). --stages overrides.
+stages: null
+
+# ---- 1 · compute_baseline (keys of src/scripts/compute_baseline.py) --------------------
+compute_baseline:
+  # name: mmlu | mmlu_pro | gpqa | medqa | aqua | commonsense_qa; params: the loader's knobs
+  # (mmlu: split, subjects, samples_per_subject; mmlu_pro: split, require_n_options (10 for
+  # hint runs), max_samples via the key below; gpqa: config, split; medqa / aqua /
+  # commonsense_qa: split). --dataset / --dataset-param override.
+  dataset:
+    name: gpqa
+    params:
+      config: gpqa_diamond
+      split: train
+  max_samples: null              # random row cap; null = the whole selection
+  consistency_samples: 8         # samples per question (1 / null = one greedy pass)
+  temperature: 0.7
+  vote_threshold: 5              # accept the top answer at >= this many votes
+  top_p: 1.0                     # the paper baselines were sampled untruncated; repo default 0.95 / 20
+  top_k: -1
+  random_answers_order: false    # shuffle options per question (part of the resume identity)
+  batch_size: 32
+  inference:                     # merged into the shared inference block
+    max_model_len: 24576
+    max_tokens: 16384
+  output_csv: null               # null → <data_dir>/baselines/<stem>_baseline.csv
+
+# ---- 2 · collect_hinted_rollouts (keys of src/scripts/collect_hinted_rollouts.py)
+collect_hinted_rollouts:
+  baseline_csv: null             # null → stage 1's CSV
+  output_csv: null               # null → <data_dir>/hinted_rollouts/<stem>_baseline_hinted_rollouts.csv
+  cases: both                    # positive_cases | negative_cases | both (--cases overrides)
+  hints:                         # cue styles (src/lib/hints.py registry); null = these eight (PAPER_HINT_STYLES)
+    - unethical_info
+    - metadata
+    - grader_hacking
+    - expert_opinion
+    - tool_output
+    - answer_key_artifact
+    - post_hoc
+    - consensus
+  sample_questions_csv: null     # example pool for few_shot / visual_pattern; null = the baseline's correct rows
+  exclusion_list: null           # JSON array of original_index values to skip
+  temperature: 0.7
+  top_p: 0.95
+  top_k: 20
+  inference:                     # generation budget (part of the generation identity)
+    max_model_len: 24576
+    max_tokens: 16384
+  chunk_size: 512                # rollouts per vLLM batch / CSV flush
+
+# ---- 3 · judge_rollouts (keys of src/scripts/judge_rollouts.py, JudgeRolloutsConfig) ----------------
+judge_rollouts:
+  input_csv: null                # null → stage 2's CSV
+  output_csv: null               # null → <rollouts stem>_judged.csv beside it (+ _summary.json); stages 4-7 need this default
+  judge_model: "z-ai/glm-5.3-flash"   # OpenRouter slug, preflighted before any GPU work (--judge-model overrides)
+  judge_prompt_file: null        # null = the built-in verbalization prompt (configs/llm_judge_prompts/faithfulness_default.txt)
+  cache_dir: null                # null → <data_dir>/judge_cache/<rollouts stem>
+  judge_all: false               # true judges every rollout, not only the switched ones (exploratory)
+  workers: 32                    # concurrent API calls
+  retry_errors: true             # retry cached judge errors
+  judge_max_tokens: 16384        # completion budget per call (doubled on a length cut-off, up to 32768)
+
+# ---- 4 · build_rollout_manifest (flags) --------------------------------------
+build_rollout_manifest:
+  dir: null                      # null → <data_dir>/hinted_rollouts (the *_judged.csv files)
+  output: null                   # null → <dir>/rollout_manifest.parquet
+  only: null                     # only judged CSVs whose name contains this
+  chunk_rows: 20000
+  no_token_len: false            # skip the tokenizer pass (trace_token_len stays null)
+  include_smoke: false           # keep *_smoke runs (the summary must use the same setting)
+  noise_flip_min_votes: 1        # no-hint votes for the target at which a switch is noise_flip
+  label_overrides: null          # null → <dir>/judge_label_overrides.csv (absent = none)
+  no_label_overrides: false
+
+# ---- 5 · select_resample_set (flags) -----------------------------------------
+select_resample_set:
+  manifest: null                 # null → stage 4's manifest
+  output_dir: null               # null → <data_dir>/resample
+  rollouts_dir: null             # null → stage 4's dir
+  only: null                     # only runs whose model or run tag contains this
+  seed: 42                       # control draw seed
+  k: 4                           # re-rolls per selected pair (= len(sample_seeds))
+  sample_seeds: [43, 44, 45, 46] # vLLM sampling seed per re-roll
+  controls_per_used: 1.0         # matched controls per used candidate
+  no_items: false
+  extend: true                   # keep stored runs, draw only the new ones (a rerun is safe)
+  chunk_rows: 20000
+
+# ---- 6 · resample_hinted_rollouts (keys of src/scripts/resample_hinted_rollouts.py; see configs/cueball/resample_hinted_rollouts.yaml)
+resample_hinted_rollouts:
+  items_dir: null                # null → <resample dir>/items
+  output_dir: null               # null → <resample dir>/rollouts
+  model_bases: null              # {model id: base yaml, relative to this file}; null → this config's `extends` base,
+                                 # or a generated <pipeline_dir>/generated_configs/<stem>_reroll_base.yaml when it pins another model (--model)
+  sample_seeds: null             # null → stage 5's seeds
+  temperature: 0.7
+  top_p: 0.95                    # null → stage 2's value
+  top_k: 20                      # null → stage 2's value
+  inference:                     # merged over stage 2's budget (the re-rolls use the same one)
+    max_model_len: 24576
+    max_tokens: 16384
+  chunk_size: 4096
+
+# ---- 7 · batch_judge_rollouts (keys of src/scripts/batch_judge_rollouts.py; see configs/cueball/batch_judge_resample.yaml)
+batch_judge_rollouts:
+  rollouts: null                 # null → this cell's <rollouts stem>_rs*.csv
+  judge_model: null              # null → stage 3's judge
+  judge_prompt_file: null        # null → stage 3's prompt
+  judge_workers: 48
+  retry_errors: true
+  judge_max_tokens: null         # null → stage 3's budget
+
+# ---- 8 · resample_noise_model + resample_relabel (flags) ---------------------
+resample_noise_model:
+  manifest: null                 # null → stage 4's manifest
+  output_dir: null               # null → <resample dir>
+  only: null
+  skip_width_check: false        # skip opening the baseline CSVs to verify option widths
+resample_relabel:
+  resample_dir: null             # null → <resample dir>
+  manifest: null                 # null → stage 4's manifest
+  no_token_len: false
+  chunk_rows: 20000
+
+# ---- 9 · unfaithfulness_metrics_summary + verify_manifest (flags) ------------
+unfaithfulness_metrics_summary:
+  dir: null                      # null → stage 4's dir
+  output: null                   # null → <dir>/unfaithfulness_metrics_summary.md
+  chunk_rows: 20000
+  include_smoke: false
+verify_manifest:
+  manifest: null                 # null → stage 4's manifest
+  summary: null                  # null → stage 9's markdown
+
+# ---- 10 · paper_plots (flags) ------------------------------------------------
+paper_plots:
+  cueball_dir: null                 # null → data_dir (must hold stage 4's hinted_rollouts/rollout_manifest.parquet and stage 5's resample/)
+  out: null                      # null → <cueball_dir>/figures
+  only: null                     # figures / variants, e.g. [F1, F3c]
+  formats: [pdf, png]
+
+# ---- 11 · assign_splits (flags; opt-in) --------------------------------------
+assign_splits:
+  manifest: null                 # null → stage 4's manifest
+  resample_manifest: null        # null → <resample dir>/resample_manifest.parquet
+  seed: 42
+  fractions: [0.7, 0.15, 0.15]   # train, val, test
+  force: false                   # re-assign everything (never after activations were extracted)
+  # extend: passed automatically when the manifest already carries a split
+
+# ---- 12 · build_probe_dataset (opt-in; one spec per predicate) ---------------
+build_probe_dataset:
+  predicates: [used_vs_ignored]  # label configurations (src/lib/selection.py LABEL_CONFIGS)
+  manifest: null                 # null → <resample dir>/resample_manifest.parquet
+  output_dir: null               # null → <data_dir>/probe_datasets (parquet <model short>_<predicate>.parquet)
+  runs: null                     # null = every run of this model
+  hint_styles: null
+  cases: both                    # both | positive | negative
+  balance: {method: none}        # or {method: ratio, r: 1.0}
+  seed: 42
+  force: false                   # rebuild an existing parquet (else it is skipped)
+  chunk_rows: 20000              # 2000 under an 8 GB cgroup cap
+
+# ---- 13 · collect_probe_activations (keys of configs/collect_probe_activations_*.yaml; opt-in)
+collect_probe_activations:
+  predicate: used_vs_ignored     # the dataset to replay: <output_dir>/<model short>_<predicate>.parquet
+  dataset: null                  # explicit parquet path instead
+  store_folder: null             # null = the dataset's name
+  storage: null                  # null → {backend: local, local_dir: <data_dir>/probe_activations/<model short>}
+                                 # or {backend: hf, hf_repo_id: <org>/probe-activations-<model short>, hf_private: false, local_dir: null}
+  # layers: the base's list unless set here (depth-specific — never copy across models)
+  seq_layers: null               # layers with seq files (subset of layers); null = all
+  max_file_gb: 8
+  hf_model_kwargs: {}            # extra from_pretrained kwargs, e.g. {chunk_size: 64}
+  upload_workers: 3
+  staging: memory                # memory | disk
+  staging_dir: "${DATA_ROOT}/tmp/collect_probe_activations"
+  resume: false                  # skip rollouts the store already holds
+  force: false                   # rewrite the store folder
+  only: null                     # rows whose hint_style / run contains this (list allowed)
+  limit: null                    # first N rows (smoke runs)
+
+# ---- 14 · train_probe (opt-in; one train config per entry) -------------------
+# Each entry holds the trainer's blocks (dataset / model / probe / training / search /
+# dataloader / output, see configs/probes/); `extends` resolves relative to this file,
+# `dataset.predicate` names the probe dataset instead of `dataset.path`, `output.dir`
+# defaults to <data_dir>/trained_probes/probes, `model.subject_model` / `model.activations`
+# default to this model and stage 13's store, `device` is the --device flag.
+train_probe:
+  runs: []
+  # - dataset: {predicate: used_vs_ignored}
+  #   model: {layers: [15, 23, 27, 31, 35, 39, 47]}
+  #   probe: {type: linear, points: [pre_cot, last_cot, pre_answer, mean_cot], standardize: true}
+  #   training: {epochs: 20, batch_size: 256, lr: 0.001, weight_decay: 0.01, patience: 5}
+  #   search: {lr: [0.001, 0.01], weight_decay: [0.001, 0.01]}
+  #   output: {run_name: linear}
+  # - dataset: {predicate: used_vs_ignored}
+  #   model: null
+  #   probe: {type: tfidf}
+  #   output: {run_name: tfidf}
+  #   device: cpu

@@ -1,0 +1,43 @@
+# Linear probes on the four probe points (pre_cot, last_cot, pre_answer,
+# mean_cot) per layer, leave-one-hint-out (T9d).
+#   uv run python -m src.scripts.train_probe --config configs/probes/nemotron_linear.yaml --dry-run
+#   uv run python -m src.scripts.train_probe --config configs/probes/nemotron_linear.yaml
+extends: nemotron_probe_local.yaml   # model (the local mirror of the shared store), dataloader, output.dir
+
+# The linear probes read the POINTS files only (points_layer_<L>_partNN, one
+# [4, hidden] tensor per rollout): the mirror holds them for every stored
+# layer (≈ 12 GB in total for the 7 layers), so every layer is probed —
+# no seq file is needed (`mirror_probe_store.py` without `--layers`).
+model:
+  layers: [15, 23, 27, 31, 35, 39, 47]
+
+dataset:
+  path: ${DATA_ROOT}/probe_datasets/nemotron-nano-9b-v2_verbalised_vs_unverbalised.parquet
+  folds: null
+  cases: both
+
+probe:
+  type: linear
+  points: [pre_cot, last_cot, pre_answer, mean_cot]   # one unit per layer × point
+  standardize: true
+
+# One residual vector per row: a fold's rows are materialised once (rows ×
+# points × layers × hidden × 2 B, ~12 GB for the whole 7-layer store), so the
+# batches are plain row slices and max_batch_tokens does not apply.
+training:
+  epochs: 20
+  batch_size: 256
+  lr: 0.001
+  weight_decay: 0.01
+  grad_clip: 1.0
+  patience: 5
+  class_weighting: balanced
+  seed: 42
+
+# 2 × 2 = 4 trials.
+search:
+  lr: [0.001, 0.01]
+  weight_decay: [0.001, 0.01]
+
+output:
+  run_name: nemotron_linear

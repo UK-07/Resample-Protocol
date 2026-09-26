@@ -1,0 +1,98 @@
+# Config for src/scripts/collect_probe_activations.py — residual-stream
+# activations of one probe dataset (build_probe_dataset.py's parquet) into one
+# activation store folder (§2.4: seq_layer_<L>_partNN + points_layer_<L>_partNN
+# + manifest.csv + manifest.meta.json).
+#
+# ONE SHARED STORE (owner decision 2026-09-24, replacing D20's one store per
+# spec): the three Nemotron dataset specs are built from the same rollouts —
+# verbalised_vs_unverbalised (40,810 rows) ⊂ verbalised_vs_rest = used_vs_ignored
+# (52,793 rows) — and the activations are ≈ 5.5 TB at 7 layers per full set, so
+# the store is collected ONCE from the superset dataset under `store_folder`
+# and every training run points its `model.activations.folder` at it (the
+# trainer requires its rows to be in the store, not the same fingerprint).
+#
+# Run:
+#     uv run python -m src.scripts.collect_probe_activations --config configs/collect_probe_activations_nemotron.yaml --dry-run
+#     uv run python -m src.scripts.collect_probe_activations --config configs/collect_probe_activations_nemotron.yaml --limit 50
+#     uv run python -m src.scripts.collect_probe_activations --config configs/collect_probe_activations_nemotron.yaml
+#     uv run python -m src.scripts.collect_probe_activations --config configs/collect_probe_activations_nemotron.yaml --resume
+#     uv run python -m src.scripts.collect_probe_activations --config configs/collect_probe_activations_nemotron.yaml --verify-only
+#
+# Nothing is generated: every dataset row is replayed teacher-forced (prompt +
+# CoT + close delimiter + the post-CoT text up to the answer commit) through the
+# model with forward hooks. The CoT-span residual stream and the four probe
+# points (pre_cot, last_cot, pre_answer, mean_cot) go to the store below.
+#
+# The active Hugging Face token must belong to an account that can write to the
+# repo's namespace (checked before the dataset is read). On a shared pod the
+# environment's HF_TOKEN may be a teammate's — it takes precedence over
+# `huggingface-cli login`, so prefix the command with HF_TOKEN=<your token>.
+
+extends: nemotron_nano-9b_base.yaml   # model_name, seed, thinking (must be on), inference
+
+# The probe dataset parquet (+ its .meta.json sidecar) the store is collected
+# from — the SUPERSET spec. Every row's subject_model must be this model's short
+# name. The meta's `dataset_spec` records this dataset (name, built_utc,
+# fingerprint, n_rows); --resume is keyed on that fingerprint.
+dataset: "${DATA_ROOT}/probe_datasets/nemotron-nano-9b-v2_used_vs_ignored.parquet"
+
+# The store folder under the storage root (null = the dataset's `name`). Named
+# independently of the collection dataset because every spec's runs read it.
+store_folder: nemotron-nano-9b-v2_shared
+
+# Where the store lives: a local folder (default) or one HF dataset repo per subject model
+# (backend: hf, hf_repo_id: "<your-hf-namespace>/probe-activations-nemotron-nano-9b-v2", hf_private: false, local_dir: null).
+storage:
+  backend: local
+  local_dir: "${DATA_ROOT}/probe_activations/nemotron-nano-9b-v2"
+
+# Decoder blocks whose output (residual stream) is stored (D22). Nemotron Nano
+# v2 has 56 blocks (hidden 4480); the base's 16-layer list is overridden here.
+# Per-model — do not copy onto another depth.
+layers: [15, 23, 27, 31, 35, 39, 47]
+
+# Layers whose SEQ files (seq_layer_<L>_partNN, the whole CoT-span residual
+# stream, ≈ 0.8 TB per layer for this store) are written — a subset of
+# `layers`; the POINTS files (≈ 12 GB for all layers) are written for every
+# layer in `layers` regardless. null = every layer of `layers`. Nemotron's
+# shared store was already being collected with seq files for all 7 layers
+# when the knob was added (2026-09-24), so it keeps them; the newer per-model
+# configs (olmo / qwen3-8b / gemma4-12b) pick three seq layers. Part of the
+# --resume identity: a run with another list refuses to extend the store.
+seq_layers: null
+
+# Split a part above this size PER FILE (one layer's seq file is the largest;
+# every part writes 2 × len(layers) files). The Hub's hard limit is 500 GB per
+# file (< 200 GB recommended). With `staging: disk` the part size costs no RAM
+# but transient disk ≈ (len(layers) + upload_workers) × max_file_gb — the shared
+# volume has only ~150 GB free, so disk staging at the old 150 GB parts is
+# impossible there. With `staging: memory` the run peaks at about
+#   max_file_gb × (len(layers) + upload_workers + 1)
+# = 8 × (7 + 3 + 1) = 88 GB here, sized against the CONTAINER's limit (`cat
+# /sys/fs/cgroup/memory.max`, ~250 GB on the pod although `free` shows 2 TB —
+# read at run time; a real run refuses an impossible plan, --dry-run warns).
+# 5.5 TB / 8 GB ≈ 100 parts ≈ 1,400 files over the 7 layers.
+max_file_gb: 8
+
+# Extra keyword arguments for the model's HF `from_pretrained` call (config
+# overrides). `chunk_size` is the Mamba-2 mixers' SSD chunk: the checkpoint's
+# default 128 OOMed the pod's 80 GB GPU on the ~26k-token tail (transformers'
+# native `nemotron_h` runs the pure-torch `torch_forward`, whose temporaries
+# scale with the chunk size — "Tried to allocate 35.00 GiB" after part 10 of
+# the shared-store collection, 2026-09-24); the chunked scan is exact for any
+# chunk size, so 64 only trades speed for memory. A remaining OOM halves it
+# further at run time down to 8 before the rollout is skipped (`cuda_oom`).
+# Also run with PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True.
+hf_model_kwargs: {}   # the checkpoint's chunk_size 128; the corrected forward (src/lib/nemotron_h_patch.py) is chunk-size invariant and fits 21k-token rows in 33 GB
+
+# Concurrent file uploads (background threads; the GPU keeps working).
+upload_workers: 3
+
+# Where a file is assembled before its upload:
+#   memory — one preallocated buffer per file, nothing touches disk (the
+#            default here: 88 GB peak of the pod's 250 GB)
+#   disk   — streamed to a temp file under `staging_dir`, deleted right after
+#            its upload attempt; RAM stays small (the fallback on a box with
+#            a small cgroup cap and a big scratch drive)
+staging: memory
+staging_dir: "${DATA_ROOT}/tmp/collect_probe_activations"

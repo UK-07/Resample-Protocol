@@ -1,0 +1,47 @@
+# Per-model base of the probe-training configs (src/scripts/train_probe.py)
+# over the SHARED STORE ON THE HUB — the collector-side identity of the store
+# (`collect_probe_activations_nemotron.yaml`'s `storage` + `store_folder`),
+# kept for a `--dry-run` against the source and as the reference the local
+# mirror is made from. Training runs do NOT extend it: `nemotron_linear.yaml`
+# and `nemotron_attention.yaml` extend `nemotron_probe_local.yaml`, the same
+# block over the pod-local mirror written by `mirror_probe_store.py` (the
+# store is ≈ 5.6 TB; streaming it from the Hub is infeasible for training —
+# see that file). `nemotron_tfidf.yaml` still extends this file for
+# `output.dir` only. Everything here is model-specific (the layer list is
+# Nemotron-Nano-9B-v2's, D22 — never copy it onto another depth).
+#
+# `model:` is FORBIDDEN for the TF-IDF probe (it reads no activations): the
+# tfidf config sets `model: null`, which load_config's merge replaces wholesale.
+
+model:
+  subject_model: nemotron-nano-9b-v2
+  # A make_backend block (src/lib/activation_store.py) plus `folder`: the store
+  # folder under the root — the SHARED store collected once from the superset
+  # dataset (collect_probe_activations_nemotron.yaml's `store_folder`; owner
+  # decision 2026-09-24) that every spec's runs read. null = the dataset's
+  # `name` (one store per spec). The trainer requires every fold id to be in
+  # the store, not the same dataset fingerprint. `backend: local` +
+  # `local_dir: ${DATA_ROOT}/probe_activations/nemotron-nano-9b-v2` reads the
+  # same layout from disk.
+  activations:
+    backend: hf
+    hf_repo_id: <your-hf-namespace>/probe-activations-nemotron-nano-9b-v2
+    local_dir: null
+    revision: null            # pin a repo commit; null = the current default branch
+    folder: nemotron-nano-9b-v2_shared
+  # Layers to probe (null = every layer the store holds; must be a subset).
+  layers: [15, 23, 27, 31, 35, 39, 47]
+
+# The sequence adapter's DataLoader (attention probe only): every worker
+# streams its own sample, `fetch_threads` layers at a time (8 × 4 ≈ the CDN's
+# useful concurrency). Host RAM ≈ (num_workers × prefetch_factor + 1) ×
+# max_batch_tokens × layers × hidden × 2 B — ~70 GB for 7 layers of the 9B
+# store at 65 536 tokens; `--dry-run` prints the estimate next to the
+# container's cgroup limit.
+dataloader:
+  num_workers: 8
+  fetch_threads: 4
+  prefetch_factor: 2
+
+output:
+  dir: ${DATA_ROOT}/trained_probes/probes

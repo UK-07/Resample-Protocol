@@ -1,0 +1,15 @@
+# CUEBALL paper grid — judge the k=4 re-rolls (GPU-free; OPENROUTER_API_KEY).
+# Keys of src/scripts/batch_judge_rollouts.py, pointed at the paper's tree. Every
+# `_rs<seed>.csv` gets its own `_judged.csv` + `_judged_summary.json` and its own
+# content-addressed cache (${DATA_ROOT}/judge_cache/<stem>/), so a rerun only buys
+# missing verdicts — Nemotron's re-rolls, judged on 09-17, cost nothing.
+#
+#     uv run python -m src.scripts.batch_judge_rollouts --config configs/cueball/batch_judge_resample.yaml --dry-run
+#     uv run python -m src.scripts.batch_judge_rollouts --config configs/cueball/batch_judge_resample.yaml
+
+rollouts:
+  - "${DATA_ROOT}/cueball/resample/rollouts/*_rs*.csv"
+judge_model: z-ai/glm-5.3-flash
+judge_prompt_file: null
+judge_workers: 48
+judge_max_tokens: 16384

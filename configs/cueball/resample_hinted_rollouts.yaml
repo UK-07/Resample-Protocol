@@ -1,0 +1,35 @@
+# CUEBALL paper grid — k=4 re-sampling of the hinted-once rollouts (GPU, no judging).
+# Keys of src/scripts/resample_hinted_rollouts.py (KNOWN_CONFIG_KEYS), with two
+# differences: it reads / writes the paper's tree (${DATA_ROOT}/cueball/resample/), and
+# the budget is the grid's 16,384 new tokens (24,576 ctx) — the budget the original
+# rollouts were generated at — instead of the shared config's 24,576.
+# (Nemotron's re-rolls of 09-16 were generated at 24,576; 0.03-1.9 % of them run past
+# 16,384 CoT tokens and are censored as truncated at analysis time.)
+#
+# One model per process; resumable per seed file:
+#     uv run python -m src.scripts.resample_hinted_rollouts \
+#         --config configs/cueball/resample_hinted_rollouts.yaml --model Qwen/Qwen3.5-9B --dry-run
+#     uv run python -m src.scripts.resample_hinted_rollouts \
+#         --config configs/cueball/resample_hinted_rollouts.yaml --model Qwen/Qwen3.5-9B
+
+items_dir: "${DATA_ROOT}/cueball/resample/items"
+output_dir: "${DATA_ROOT}/cueball/resample/rollouts"
+
+model_bases:
+  nvidia/NVIDIA-Nemotron-Nano-9B-v2: ../nemotron_nano-9b_base.yaml
+  Qwen/Qwen3.5-9B: ../qwen_3-5-9b_base.yaml
+  Qwen/Qwen3.6-27B: ../qwen_3-6_base.yaml
+  Qwen/Qwen3-8B: ../qwen_3-8b_base.yaml
+  allenai/Olmo-3-7B-Think: ../olmo_3-7b-think_base.yaml
+  google/gemma-4-12B-it: ../gemma_4-12b_base.yaml
+
+sample_seeds: [43, 44, 45, 46]
+temperature: 0.7
+top_p: 0.95
+top_k: 20
+
+inference:
+  max_tokens: 16384
+  max_model_len: 24576
+
+chunk_size: 4096

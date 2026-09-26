@@ -1,0 +1,91 @@
+# CUEBALL paper grid — Qwen/Qwen3.5-9B on MMLU-Pro (test, 10-option rows, the shared 1,000-question CUEBALL set; A-J).
+# compute_baseline → collect_hinted_rollouts → judge_rollouts from this one file
+# (layout and keys: configs/pipeline/run_pipeline.yaml; runbook: configs/cueball/README.md).
+#
+#     uv run python -m src.scripts.run_pipeline --config configs/cueball/run_pipeline_q359b_mmlu-pro.yaml --dry-run
+#     uv run python -m src.scripts.run_pipeline --config configs/cueball/run_pipeline_q359b_mmlu-pro.yaml
+#
+# ONE recipe for the whole grid — the recipe of the four Nemotron-Nano-9B-v2 runs
+# of 0909/0910, which the paper reuses as they are:
+#   baseline   8 samples @ T 0.7, accept at >= 5 votes, 16,384 new tokens (24,576 ctx),
+#              sampled WITHOUT truncation (top_p 1.0 / top_k -1). That is what every
+#              existing baseline was sampled at (vLLM's defaults, until 2026-09-16);
+#              the repo default is now 0.95 / 20, so the two keys are pinned here —
+#              drop them and this model's baseline stability stops being comparable.
+#   rollouts   cases both, the 8 default cue styles, T 0.7, top_p 0.95 / top_k 20,
+#              seed 42, 16,384 new tokens (24,576 ctx)
+#   judge      z-ai/glm-5.3-flash, built-in v2 verbalization prompt
+#
+# The 1,000 questions are the SAME for all five models: `require_n_options: 10` +
+# `max_samples: 1000` + seed 42 draws ${DATA_ROOT}/cueball/mmlu_pro_1000_questions.csv
+# exactly (Olmo's 800 questions of 0909 + the next 200 = the first 1,000 rows of
+# Nemotron's 2,000-question baseline; checked 2026-09-18). Do not change any of the three.
+#
+# Outputs go to the paper's own tree, ${DATA_ROOT}/cueball/ (see its README), not to the
+# shared ${DATA_ROOT}/baselines | hinted_rollouts:
+#     ${DATA_ROOT}/cueball/baselines/qwen3.5-9b_mmlu_pro-test_cueball_baseline.csv (+ .meta.json)
+#     ${DATA_ROOT}/cueball/hinted_rollouts/qwen3.5-9b_mmlu_pro-test_cueball_baseline_hinted_rollouts.csv (+ .meta.json)
+#     ${DATA_ROOT}/cueball/hinted_rollouts/qwen3.5-9b_mmlu_pro-test_cueball_baseline_hinted_rollouts_judged.csv (+ _summary.json)
+#     ${DATA_ROOT}/cueball/pipeline/qwen3.5-9b_mmlu_pro-test_cueball_baseline_pipeline.json
+# The judge cache stays in the shared ${DATA_ROOT}/judge_cache/<rollouts stem>/.
+
+extends: ../qwen_3-5-9b_base.yaml
+
+run_name: "cueball"
+pipeline_dir: "${DATA_ROOT}/cueball/pipeline"
+data_dir: "${DATA_ROOT}/cueball"       # the tree every stage after judge reads and writes
+
+# ---- stage 1: compute_baseline ---------------------------------------------
+compute_baseline:
+  dataset:
+    name: mmlu_pro
+    params:
+      split: test
+      require_n_options: 10
+  max_samples: 1000
+  consistency_samples: 8
+  temperature: 0.7
+  vote_threshold: 5
+  top_p: 1.0               # pinned to the Nemotron baselines' regime — see the header
+  top_k: -1
+  random_answers_order: false
+  batch_size: 32
+  inference:
+    max_model_len: 24576
+    max_tokens: 16384
+  output_csv: "${DATA_ROOT}/cueball/baselines/qwen3.5-9b_mmlu_pro-test_cueball_baseline.csv"
+
+# ---- stage 2: collect_hinted_rollouts --------------------------------------
+collect_hinted_rollouts:
+  baseline_csv: null       # → stage 1's CSV
+  output_csv: "${DATA_ROOT}/cueball/hinted_rollouts/qwen3.5-9b_mmlu_pro-test_cueball_baseline_hinted_rollouts.csv"
+  cases: both
+  hints:
+    - unethical_info
+    - metadata
+    - grader_hacking
+    - expert_opinion
+    - tool_output
+    - answer_key_artifact
+    - post_hoc
+    - consensus
+  sample_questions_csv: null
+  exclusion_list: null
+  temperature: 0.7
+  top_p: 0.95
+  top_k: 20
+  inference:
+    max_model_len: 24576
+    max_tokens: 16384
+  chunk_size: 512
+
+# ---- stage 3: judge_rollouts -----------------------------------------------
+judge_rollouts:
+  input_csv: null          # → stage 2's CSV
+  output_csv: null         # → <rollouts stem>_judged.csv beside it
+  judge_model: "z-ai/glm-5.3-flash"
+  judge_prompt_file: null  # built-in v2 verbalization prompt
+  cache_dir: "${DATA_ROOT}/judge_cache/qwen3.5-9b_mmlu_pro-test_cueball_baseline_hinted_rollouts"   # the cache the paper verdicts were judged into
+  judge_all: false
+  workers: 32
+  judge_max_tokens: 16384  # the judge batch's value: fewer finish_reason=length holes

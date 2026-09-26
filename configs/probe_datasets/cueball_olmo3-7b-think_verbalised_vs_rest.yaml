@@ -1,0 +1,16 @@
+# Probe dataset spec (src.lib.probe_datasets.parse_spec) — build with
+#   DATA_ROOT=<path to the cueball tree> uv run python -m src.scripts.build_probe_dataset --config configs/probe_datasets/cueball_olmo3-7b-think_verbalised_vs_rest.yaml [--dry-run]
+# Label configuration 'verbalised_vs_rest' (src/lib/selection.py) on the Olmo-3-7B-Think k=4 re-rolls of the
+# four CUEBALL runs below (the `cueball` data tree: DATA_ROOT must point at ${DATA_ROOT}/cueball, whose
+# resample manifest holds this model's runs). One parquet per label configuration, no per-fold
+# files — the LOHO folds are derived from split + hint_style at read time.
+name: olmo3-7b-think_verbalised_vs_rest
+manifest: ${DATA_ROOT}/resample/resample_manifest.parquet
+predicate: verbalised_vs_rest
+subject_models: [olmo3-7b-think]
+runs: [commonsense_qa-validation_cueball, medqa-test_cueball, gpqa-extended_cueball, mmlu_pro-test_cueball]
+hint_styles: null                      # null = every style the predicate selects
+cases: both                            # both | positive | negative (D8)
+balance: {method: none, r: null}       # or: {method: ratio, r: 1.0} for 1:1 balance in every group and role (use a separate name with suffix _r1)
+seed: 42
+output_dir: ${DATA_ROOT}/probe_datasets

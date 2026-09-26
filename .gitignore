@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual environments
+env/
+venv/
+.venv/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Distribution / packaging
+*.egg-info/
+*.egg
+dist/
+build/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.claude/settings.local.json
+
+# Environment variables
+.env
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Data
+data/
+
+# Per-member local config overrides (shared-drive absolute output paths)
+configs/local/

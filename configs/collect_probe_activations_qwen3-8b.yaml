@@ -1,0 +1,78 @@
+# Config for src/scripts/collect_probe_activations.py — residual-stream
+# activations of one probe dataset (build_probe_dataset.py's parquet) into one
+# activation store folder (seq_layer_<L>_partNN + points_layer_<L>_partNN +
+# manifest.csv + manifest.meta.json) for Qwen/Qwen3-8B.
+#
+# ONE SHARED STORE per model (owner decision 2026-09-24): collected ONCE from
+# the superset dataset (`used_vs_ignored`) under `store_folder`; every
+# training run points its `model.activations.folder` at it (the trainer
+# requires its rows to be in the store, not the same fingerprint).
+#
+# Run:
+#     uv run python -m src.scripts.collect_probe_activations --config configs/collect_probe_activations_qwen3-8b.yaml --dry-run
+#     uv run python -m src.scripts.collect_probe_activations --config configs/collect_probe_activations_qwen3-8b.yaml --limit 50
+#     uv run python -m src.scripts.collect_probe_activations --config configs/collect_probe_activations_qwen3-8b.yaml
+#     uv run python -m src.scripts.collect_probe_activations --config configs/collect_probe_activations_qwen3-8b.yaml --resume
+#     uv run python -m src.scripts.collect_probe_activations --config configs/collect_probe_activations_qwen3-8b.yaml --verify-only
+#
+# Nothing is generated: every dataset row is replayed teacher-forced (prompt +
+# CoT + close delimiter + the post-CoT text up to the answer commit) through the
+# model with forward hooks. The active Hugging Face token must be able to write
+# to the repo's namespace (checked before the dataset is read); on a shared pod
+# prefix the command with HF_TOKEN=<your token>.
+
+extends: qwen_3-8b_base.yaml   # model_name (Qwen/Qwen3-8B), seed, thinking (must be on), inference
+
+# The probe dataset parquet (+ its .meta.json sidecar) the store is collected
+# from — the SUPERSET spec, built on the shared tree (tree-agnostic through
+# ${DATA_ROOT}). Every row's subject_model must be `qwen3-8b`.
+dataset: "${DATA_ROOT}/probe_datasets/qwen3-8b_used_vs_ignored.parquet"
+
+# The store folder under the storage root (null = the dataset's `name`).
+store_folder: qwen3-8b_shared
+
+# Where the store lives: a local folder (default) or one HF dataset repo per subject model
+# (backend: hf, hf_repo_id: "<your-hf-namespace>/probe-activations-qwen3-8b", hf_private: false, local_dir: null).
+storage:
+  backend: local
+  local_dir: "${DATA_ROOT}/probe_activations/qwen3-8b"
+
+# Decoder blocks whose output (residual stream) is stored — the POINTS files
+# (points_layer_<L>_partNN, [4, hidden] per rollout, ≈ 12 GB for all layers)
+# are written for every layer here. The 7 layers sit at the same relative
+# depths as Nemotron's [15, 23, 27, 31, 35, 39, 47] of 56 (fractions
+# ≈ 0.27, 0.41, 0.48, 0.55, 0.63, 0.70, 0.84), rounded for this model's depth
+# (here 0.28, 0.42, 0.47, 0.56, 0.64, 0.69, 0.83 of 36). Qwen3-8B has 36 decoder blocks (hidden 4096); the model writes its own
+# `<think>`, which build_item keeps as the sequence's head.
+# Per-model — do not copy onto another depth.
+layers: [10, 15, 17, 20, 23, 25, 30]
+
+# Layers whose SEQ files (seq_layer_<L>_partNN, the whole CoT-span residual
+# stream, ≈ 0.8 TB per layer per model) are written — a subset of `layers`:
+# the first, the middle and a late one. The attention probes read one or a
+# few of these; the linear probes read the points of every layer above. HF
+# storage is the constraint, so the other four layers get points only.
+# null = every layer of `layers`. Part of the --resume identity.
+seq_layers: [10, 20, 30]
+
+# Split a part above this size PER FILE (one layer's seq file is the largest;
+# every part writes len(seq_layers) + len(layers) files). With
+# `staging: memory` the run peaks at about
+#   max_file_gb × (len(seq_layers) + upload_workers + 1) = 8 × (3 + 6 + 1) = 80 GB
+# (plus the small points buffers), sized against the CONTAINER's cgroup limit
+# (~250 GB on the pod; read at run time — a real run refuses an impossible
+# plan, --dry-run warns).
+max_file_gb: 8
+
+# Extra keyword arguments for the model's HF `from_pretrained` call (config
+# overrides); a dense transformer needs none.
+hf_model_kwargs: {}
+
+# Concurrent file uploads (background threads; the GPU keeps working).
+upload_workers: 6
+
+# Where a file is assembled before its upload: memory (one preallocated buffer
+# per file) or disk (streamed to a temp file under `staging_dir`, deleted
+# after its upload).
+staging: memory
+staging_dir: "${DATA_ROOT}/tmp/collect_probe_activations"

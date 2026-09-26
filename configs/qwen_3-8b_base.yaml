@@ -1,0 +1,36 @@
+# Shared defaults for Qwen3-8B pipeline configs.
+#
+# A config inherits these by declaring `extends: qwen_3-8b_base.yaml` on its first line; any
+# key it also sets overrides the base (nested dicts merge, scalars/lists
+# replace). Inheritance is one level deep — this file must not itself declare
+# `extends`.
+
+model_name: "Qwen/Qwen3-8B"
+seed: 42
+
+# Chain-of-thought on/off. Qwen3-8B is a native reasoner whose template
+# genuinely honours `enable_thinking`: True lets the model emit its own
+# <think>…</think>, False injects an empty block. Thinking-off is therefore real
+# for this model (unlike Nemotron Nano v2 / Olmo 3 Think, which refuse it).
+thinking: on
+
+# Inference knobs shared by every vLLM script (the HF-path
+# collect_probe_activations.py replays stored rollouts and generates nothing,
+# so it reads none of them).
+#   max_model_len — vLLM context window; must cover the longest prompt +
+#                   max_tokens (unused on the HF path).
+#   max_tokens    — generation budget (vLLM SamplingParams / HF max_new_tokens).
+# max_num_seqs is deliberately unset (vLLM's default): this is a dense
+# transformer, with no per-sequence Mamba cache blocks to bound.
+inference:
+  max_model_len: 16384
+  max_tokens: 8192
+  gpu_memory_utilization: 0.9
+  tensor_parallel_size: 1
+
+# Residual-stream layers to capture (collect_probe_activations.py; a collector
+# config may override the list for its store). This model has
+# 36 decoder layers and a hidden size of 4096; this samples 16 of them evenly across the depth, mirroring the
+# coverage of the other bases. collect_probe_activations validates the model's actual
+# depth before generating, so a list scaled for another model fails immediately.
+layers: [0, 2, 5, 7, 9, 12, 14, 16, 19, 21, 23, 26, 28, 30, 33, 35]
