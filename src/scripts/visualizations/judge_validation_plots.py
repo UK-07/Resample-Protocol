@@ -63,7 +63,7 @@ DEFAULT_GOLDEN = "${DATA_ROOT}/manual_golden_dataset_judge/golden_dataset.csv"
 REFERENCE_KAPPA = 0.69          # Walden & Wanner 2026: κ of their hint-use facet (50 items)
 REFERENCE_KAPPA_LABEL = "Walden & Wanner κ = 0.69"
 PAPER_MODELS = ["nemotron-nano-9b-v2", "olmo3-7b-think", "qwen3-8b", "qwen3.5-9b", "gemma4-12b-it"]
-PAPER_CUES = [c for c in CUE_ORDER if c != "grader_hacking"]   # the paper's seven cue styles
+PAPER_CUES = list(CUE_ORDER)                                   # the paper's eight cue styles (grader_hacking included)
 CLAIM_ROLES = ("rejected", "verification_only")                # "mentions the cue and claims not to rely on it"
 LABEL_SETS = ["primary", "arbiter", "reviewer"]
 LABEL_SET_NAMES = {"primary": "primary judge (GLM-5.3-Flash)", "arbiter": "arbiter (GPT-5.6-Terra)",
@@ -262,8 +262,8 @@ def load_golden(path: Path | None, notes: list[str]) -> pd.DataFrame | None:
 
 
 def kappa_grid(sample: pd.DataFrame, cues: list[str], models: list[str]) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """κ of the binary label (primary vs arbiter) per cue × model, plus an ``all cues`` row; and the n per cell."""
-    rows = sample[sample["both_binary"]]
+    """κ of the binary label (primary vs arbiter) per cue × model, plus an ``all cues`` row pooled over ``cues``; and the n per cell."""
+    rows = sample[sample["both_binary"] & sample["hint_style"].isin(cues)]
     kappa = pd.DataFrame(index=cues + ["all"], columns=models, dtype=float)
     n = pd.DataFrame(0, index=cues + ["all"], columns=models, dtype=int)
     for m in models:
@@ -445,7 +445,7 @@ def fig_j1(d: Inputs, cfg: dict) -> list[Variant]:
     cues = [c for c in cfg["cues"] if c in set(d.sample["hint_style"])]
     kappa, n = kappa_grid(d.sample, cues, models)
     row_names = [CUE_NAMES.get(c, c) for c in cues] + ["all cues"]
-    n_binary = int(d.sample["both_binary"].sum())
+    n_binary = int((d.sample["both_binary"] & d.sample["hint_style"].isin(cues)).sum())
     pooled = ", ".join(f"{model_label(m)} κ = {kappa.loc['all', m]:.2f} (n = {int(n.loc['all', m])})" for m in models)
     sources = "; ".join(s for s in d.notes if "corrected-prompt" in s)
 
@@ -829,7 +829,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", default=None, help="output directory (default: <cueball-dir>/plots/judge_validation)")
     parser.add_argument("--only", default=None, help="comma-separated figures or variants, e.g. J1,J4a")
     parser.add_argument("--formats", default="pdf,png")
-    parser.add_argument("--cues", default="paper", help="'paper' (the seven cue styles of the paper) or 'all'")
+    parser.add_argument("--cues", default="paper",
+                        help="'paper' or 'all' (both: the eight cue styles of the paper), or comma-separated cue ids, e.g. "
+                             "expert_opinion,post_hoc, which restricts the per-cue rows of J1a/J1b/J4b, their pooled row and "
+                             "the J2 rollouts to those cues (drawn in the paper's cue order); J1c, J3 and J4a/J4c use every sampled row")
     parser.add_argument("--models", default="paper",
                         help="'paper' (the five models of the paper), 'all', or comma-separated model ids, e.g. nemotron-nano-9b-v2")
     parser.add_argument("--seed", type=int, default=42)
@@ -852,7 +855,15 @@ def main(argv: list[str] | None = None) -> int:
         unknown = sorted(set(models) - set(MODEL_ORDER))
         if unknown:
             parser.error(f"unknown model id(s) {unknown}; known: {MODEL_ORDER}")
-    cfg = {"cues": PAPER_CUES if args.cues == "paper" else CUE_ORDER, "models": models,
+    if args.cues in ("paper", "all"):
+        cues = PAPER_CUES if args.cues == "paper" else CUE_ORDER
+    else:
+        given = {c.strip() for c in args.cues.split(",") if c.strip()}
+        unknown = sorted(given - set(CUE_ORDER))
+        if unknown or not given:
+            parser.error(f"unknown cue id(s) {unknown}; known: {CUE_ORDER}" if unknown else "--cues names no cue")
+        cues = [c for c in CUE_ORDER if c in given]          # paper order, de-duplicated
+    cfg = {"cues": cues, "models": models,
            "seed": args.seed, "n_boot": args.n_boot, "validation_dir": validation_dir}
 
     apply_style()

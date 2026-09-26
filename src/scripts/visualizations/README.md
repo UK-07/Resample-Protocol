@@ -75,7 +75,7 @@ intervals; cells with more than 10 % label-less rollouts carry `†`.
 ## `judge_validation_plots.py` — the judge-validation figures (J1–J4)
 
 `python -m src.scripts.visualizations.judge_validation_plots [--validation-dir D] [--cueball-dir D] [--out D]
-[--only J1,J4a] [--models paper|all] [--cues paper|all]` reads the `judge_validation.py` run directory
+[--only J1,J4a] [--models paper|all|<ids>] [--cues paper|all|<ids>]` reads the `judge_validation.py` run directory
 (`sample_judged.csv`, `review_sheet.csv`), the shared manifest, the prompt-backfill judge cache,
 `question_reliance.csv`, the label overrides, the tree's `rollout_manifest.parquet` + `binary_judge/` and the
 manual golden set (a missing input skips the variants that need it) and writes `J*.{pdf,png}` + `figures_judge.md`

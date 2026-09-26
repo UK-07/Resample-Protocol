@@ -195,6 +195,36 @@ class JudgeValidationPlotsTest(unittest.TestCase):
             self.assertNotIn("corrected-prompt verdicts used for", index)   # no Qwen rows, so no backfill note
             self.assertIn("pooled over the four datasets of Nemotron-Nano-9B", index)
 
+    def test_paper_cues_are_the_eight_cue_styles(self):
+        self.assertEqual(mod.PAPER_CUES, mod.CUE_ORDER)
+        self.assertEqual(len(mod.PAPER_CUES), 8)
+        self.assertIn("grader_hacking", mod.PAPER_CUES)
+
+    def test_kappa_pooled_row_covers_only_the_drawn_cues(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = synthetic_inputs(Path(tmp))
+            s = mod.load_sample(paths["validation_dir"], paths["shared_manifest"], paths["backfill"], paths["reliance"], paths["overrides"], [])
+            cues = ["expert_opinion", "post_hoc"]
+            kappa, n = mod.kappa_grid(s, cues, ["nemotron-nano-9b-v2"])
+            self.assertEqual(list(kappa.index), cues + ["all"])
+            drawn = s[(s["subject_model"] == "nemotron-nano-9b-v2") & s["both_binary"] & s["hint_style"].isin(cues)]
+            self.assertEqual(int(n.loc["all", "nemotron-nano-9b-v2"]), len(drawn))
+            self.assertEqual(int(n.loc[cues, "nemotron-nano-9b-v2"].sum()), len(drawn))
+
+    def test_explicit_cue_list_restricts_the_rows_and_bad_lists_are_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = synthetic_inputs(Path(tmp))
+            out = Path(tmp) / "figs"
+            # duplicated and out-of-order ids are canonicalised; the caption counts only the drawn cues
+            self.assertEqual(mod.main(argv_for(paths, out, only="J1a", cues="post_hoc, expert_opinion,post_hoc")), 0)
+            s = mod.load_sample(paths["validation_dir"], paths["shared_manifest"], paths["backfill"], paths["reliance"], paths["overrides"], [])
+            expected = int((s["both_binary"] & s["hint_style"].isin(["expert_opinion", "post_hoc"])).sum())
+            self.assertLess(expected, int(s["both_binary"].sum()))
+            self.assertIn(f"{expected} rows both judges labelled 0/1", (out / "figures_judge.md").read_text())
+            for bad in ("expert_opinion,not-a-cue", ",", ""):
+                with self.assertRaises(SystemExit):
+                    mod.main(argv_for(paths, out, cues=bad))
+
     def test_unknown_model_id_is_refused(self):
         with tempfile.TemporaryDirectory() as tmp:
             paths = synthetic_inputs(Path(tmp))
