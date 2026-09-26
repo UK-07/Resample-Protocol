@@ -88,6 +88,24 @@ the `HINTS` registry in `src/lib/hints.py`; judge prompts are in `configs/llm_ju
 
 ## Reproducing the paper
 
+For the **September 26 revised figures**, use the repository's revision workflow. It recomputes
+plotting tables and question-cluster intervals from the numeric bundle, then writes **33 vector
+PDFs and three LaTeX tables** to a fresh directory. No separate paper checkout, GPU or judge key
+is needed. See [PAPER_REPRODUCTION.md](PAPER_REPRODUCTION.md) for the input checksum, lightweight
+pinned environment, output map and numerical validation.
+
+```bash
+python -m src.scripts.visualizations.make_all \
+    --paper-revision-bundle /path/to/revision_analysis_bundle_2026-09-26.tar.gz \
+    --out-root /path/to/fresh-paper-output --dry-run
+python -m src.scripts.visualizations.make_all \
+    --paper-revision-bundle /path/to/revision_analysis_bundle_2026-09-26.tar.gz \
+    --out-root /path/to/fresh-paper-output
+```
+
+The following pipeline commands reproduce the underlying released tree and retained legacy
+figures. They do not replace the revision workflow above for the new cluster-interval figures.
+
 The paper evaluates the five models above on CommonsenseQA, MedQA, GPQA-Extended and
 MMLU-Pro-1000. `configs/cueball/` contains one `run_pipeline_<model>_<dataset>.yaml` per cell,
 including four additional Qwen3.6-27B cells in the broader six-model release. Tree-level stages
@@ -154,21 +172,39 @@ studies. The alpha-implied noise share is compared with non-recurrence and non-p
 different quantities; it does not identify individual causal reliance.
 
 SSP uses baseline sample 0 and a binary judge on original flips; RSP uses the role judge on
-on-target re-rolls from persistent pairs. Their reported rate comparison changes population,
-judge and weighting together. Most rate and survival plots currently use Wilson intervals,
-which ignore question-level clustering. The question-cluster reanalysis and equal-pair-weighted
-RSP comparison remain pending.
+on-target re-rolls from persistent pairs. The September 26 manuscript revision separates judge,
+persistence-filter, trace, population and weighting changes with matched IDs and paired
+question-cluster intervals (10,000 replicates, seed 42, questions resampled within dataset).
+On 65,752 shared originals, binary and role unfaithfulness are 8.590% and 9.804%. Holding the
+judge and pair weights fixed, replacing persistent-pair originals with fresh re-rolls changes
+the rate from 8.406% to 8.542%: +0.136 percentage points [−0.049, 0.320]. Full-pool RSP rates
+are 9.130% with re-roll weighting and 9.352% with equal-pair weighting.
 
-Other limits retained in the reported results are the baseline/cued decoding mismatch,
-truncated re-rolls counted as off-target for persistence, missing role labels on some originals,
-and pooled inclusion of `post_hoc` instructed justification. The primary judge audit covers one
-model and dataset; its inter-LLM agreement is not human-label accuracy or validation of the
-incoherent label. Additional controls and sensitivities require the data analyses described in
-the manuscript.
+The revised manuscript's survival, alpha, role, dose-response, rate and yield figures and
+benchmark tables use question-cluster intervals. The separate judge audit retains its stated
+Wilson spot-check and stratified-bootstrap intervals. The revised figure builders and
+question-cluster calculations are maintained here under `src/lib/paper_revision/`, with the thin
+`src.scripts.visualizations.paper_revision` CLI and the `make_all --paper-revision-bundle`
+entry point; the three judge plots redraw the supplied audit summary. The original data-tree
+plotting modes remain available for historical outputs and
+retained legacy figures.
 
-The paper reports 20,000 re-rolls from persistent pairs judged unfaithful or incoherent (1,223
-incoherent). These are dependent traces. The 1,995 strict clean pairs in its cost funnel are a
-different subset; neither number is a count of independent questions.
+Remaining limitations include the baseline/cued decoding mismatch and missing structured
+roles on 18,972 originals. Production persistence still treats truncated or unparseable
+re-rolls as misses; the manuscript now reports effective-k, complete-four sensitivity and
+full-population missing-answer bounds. Positive SSP-unfaithful survival lies between 59.70%
+and 65.63% under those bounds. Complete-case estimates describe selected subsets rather than
+correcting missingness. `post_hoc` is reported separately as instructed justification:
+excluding it lowers positive survival to 54.8% and pooled RSP unfaithfulness to 5.67%.
+The primary judge audit covers one model and dataset; its inter-LLM agreement does not measure
+human-label accuracy or independently validate incoherence or the separate SSP binary judge.
+No new model generations or judge runs were performed for this reanalysis.
+
+The five-model release contains 20,000 unfaithful or incoherent re-rolls (1,223 incoherent)
+from 9,997 source pairs and 2,610 canonical questions. The 1,995 strict clean pairs used in the
+cost funnel form a different subset. Train/validation/test contain 13,886/2,962/3,152 traces,
+6,941/1,501/1,555 source pairs and 1,810/397/403 questions; no question or source pair crosses
+splits. These counts were checked by independently aggregating the archived label records.
 
 ## Reproducibility of the released tree
 

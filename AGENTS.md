@@ -26,7 +26,8 @@ controls → statistics and figures, plus optional white-box probes. Start with 
 | task | how |
 | --- | --- |
 | run / resume a cell | copy a `configs/cueball/run_pipeline_*.yaml`, set the model base, dataset, output paths and `data_dir`, dry-run, run; `--stages` restricts (GPU: `baseline`, `rollouts`, `rerolls`; judge key: `judge`, `judge_rerolls`) |
-| reproduce the paper's numbers and figures | `--stages manifest,resample_select,relabel,summary,figures,splits` on any cell config over the released tree; `python -m src.scripts.visualizations.make_all` for the additional plots |
+| reproduce the revised paper figures | `python -m src.scripts.visualizations.make_all --paper-revision-bundle /path/to/revision_analysis_bundle_2026-09-26.tar.gz --out-root /path/to/fresh-output --dry-run`, then repeat without `--dry-run`; see `PAPER_REPRODUCTION.md` |
+| reproduce the released tree and legacy figures | `--stages manifest,resample_select,relabel,summary,figures,splits` on any cell config over the released tree; `python -m src.scripts.visualizations.make_all` for the additional plots |
 | add a model | `MODEL_CONFIGS` in `src/lib/model_utils.py` + `configs/<model>_base.yaml`; smoke-test with `max_samples: 8` |
 | add a cue style | `HINTS` registry in `src/lib/hints.py` (+ `extract_hint_text`, tests) |
 | add a dataset | loader in `src/lib/dataset.py`, registered in `DATASET_REGISTRY` |

@@ -18,6 +18,7 @@ dependencies = [
     "pandas",
     "pyarrow",
     "python-dotenv",
+    "reportlab>=4.4.9",
     "scikit-learn>=1.5",
     "scipy",
     "spacy>=3.8,<4",
@@ -29,3 +30,6 @@ dependencies = [
 
 [tool.setuptools.packages.find]
 include = ["src", "src.*"]
+
+[tool.setuptools.package-data]
+"src.lib.paper_revision" = ["assets/*.json"]

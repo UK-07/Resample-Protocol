@@ -1,0 +1,20 @@
+# CPU-only paper reproduction, tested with Python 3.12.
+# Includes transitive dependencies; no GPU or model stack is required.
+charset-normalizer==3.5.1
+contourpy==1.4.0
+cycler==0.12.1
+fonttools==4.66.0
+kiwisolver==1.5.1
+matplotlib==3.11.2
+numpy==2.5.3
+packaging==26.3
+pandas==2.2.3
+pillow==12.3.0
+pyarrow==25.0.1
+pyparsing==3.3.3
+python-dateutil==2.9.0.post0
+python-dotenv==1.2.2
+pytz==2026.4
+reportlab==4.4.9
+six==1.17.0
+tzdata==2026.4
