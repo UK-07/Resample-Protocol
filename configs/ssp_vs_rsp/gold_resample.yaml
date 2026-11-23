@@ -1,0 +1,21 @@
+# Gold re-rolls of the SSP-vs-RSP test-split pairs (src/scripts/ssp_vs_rsp/make_gold_items.py): 12 fresh
+# sampling seeds per pair with the k=4 re-roll stage's sampling (T 0.7, top-p 0.95, top-k 20) and the paper's
+# 16,384-token budget for every model (Nemotron's k=4 re-rolls used 24,576).
+#   DATA_ROOT=/workspace/data .venv/bin/python -m src.scripts.resample_hinted_rollouts \
+#       --config configs/ssp_vs_rsp/gold_resample.yaml --model qwen3-8b
+items_dir: "${DATA_ROOT}/ssp_vs_rsp/gold/items"
+output_dir: "${DATA_ROOT}/ssp_vs_rsp/gold/rollouts"
+model_bases:
+  nvidia/NVIDIA-Nemotron-Nano-9B-v2: ../nemotron_nano-9b_base.yaml
+  Qwen/Qwen3-8B: ../qwen_3-8b_base.yaml
+  allenai/Olmo-3-7B-Think: ../olmo_3-7b-think_base.yaml
+  google/gemma-4-12B-it: ../gemma_4-12b_base.yaml
+sample_seeds: [47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58]
+temperature: 0.7
+top_p: 0.95
+top_k: 20
+inference:
+  max_tokens: 16384
+  max_model_len: 24576
+  gpu_memory_utilization: 0.92
+chunk_size: 4096

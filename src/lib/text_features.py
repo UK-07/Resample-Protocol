@@ -41,6 +41,7 @@ __all__ = [
     "load_vectorizer",
     "n_features",
     "normalise_texts",
+    "normalise_prefixes",
     "normalised_corpus",
     "save_vectorizer",
     "spacy_version",
@@ -208,23 +209,25 @@ def _check_nlp(nlp, cfg: TextPipelineConfig) -> None:
             raise ValueError(f"nlp is {loaded!r} but text.spacy_model is {cfg.spacy_model!r}")
 
 
+def _token_text(token, cfg: TextPipelineConfig) -> str | None:
+    """The normalised text of one spaCy token, or None when the pipeline drops it."""
+    if token.is_space or token.is_punct:
+        return None
+    if cfg.remove_stopwords and token.is_stop:
+        return None
+    if token.like_num and not cfg.keep_numbers:
+        return None
+    text = token.lemma_ if cfg.lemmatize else token.text
+    if cfg.lowercase:
+        text = text.lower()
+    text = text.strip()
+    if len(text) < cfg.min_token_chars or not text:
+        return None
+    return text
+
+
 def _tokens(doc, cfg: TextPipelineConfig) -> list[str]:
-    out = []
-    for token in doc:
-        if token.is_space or token.is_punct:
-            continue
-        if cfg.remove_stopwords and token.is_stop:
-            continue
-        if token.like_num and not cfg.keep_numbers:
-            continue
-        text = token.lemma_ if cfg.lemmatize else token.text
-        if cfg.lowercase:
-            text = text.lower()
-        text = text.strip()
-        if len(text) < cfg.min_token_chars or not text:
-            continue
-        out.append(text)
-    return out
+    return [t for t in (_token_text(token, cfg) for token in doc) if t is not None]
 
 
 def _effective_n_process(cfg: TextPipelineConfig, n_texts: int) -> int:
@@ -253,6 +256,39 @@ def normalise_texts(texts: list[str], cfg: TextPipelineConfig, *, nlp=None) -> l
         nlp.max_length = longest + 1
     docs = nlp.pipe(texts, batch_size=cfg.batch_size, n_process=_effective_n_process(cfg, len(texts)))
     return [" ".join(_tokens(doc, cfg)) for doc in docs]
+
+
+def normalise_prefixes(texts: list[str], cutoffs: list[list[int]], cfg: TextPipelineConfig, *,
+                       nlp=None) -> list[list[str]]:
+    """Per text, one normalised string per character cutoff: the tokens of :func:`normalise_texts`
+    whose span ends at or before the cutoff (each text is parsed once, not once per prefix).
+
+    ``cutoffs[i]`` are character offsets into ``texts[i]``; a cutoff at ``len(texts[i])`` gives the
+    same string as :func:`normalise_texts`.
+    """
+    texts = list(texts)
+    if len(cutoffs) != len(texts):
+        raise ValueError(f"cutoffs has {len(cutoffs)} entries for {len(texts)} texts")
+    for i, t in enumerate(texts):
+        if not isinstance(t, str):
+            raise TypeError(f"texts[{i}] is {type(t).__name__}, expected str")
+    if not texts:
+        return []
+    if nlp is None:
+        nlp = load_nlp(cfg)
+    _check_nlp(nlp, cfg)
+    longest = max(len(t) for t in texts)
+    if nlp.max_length < longest + 1:
+        nlp.max_length = longest + 1
+    docs = nlp.pipe(texts, batch_size=cfg.batch_size, n_process=_effective_n_process(cfg, len(texts)))
+    out = []
+    for doc, cuts in zip(docs, cutoffs):
+        kept = [(token.idx + len(token.text), text) for token in doc
+                if (text := _token_text(token, cfg)) is not None]
+        ends = np.asarray([e for e, _ in kept], dtype=np.int64)
+        words = [w for _, w in kept]
+        out.append([" ".join(words[: int(np.searchsorted(ends, int(c), side="right"))]) for c in cuts])
+    return out
 
 
 def dataset_name_for(dataset: str | os.PathLike | dict) -> str:

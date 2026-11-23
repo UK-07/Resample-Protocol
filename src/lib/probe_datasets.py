@@ -425,6 +425,8 @@ TEXT_COLUMNS = ("prompt", "hinted_prompt", "reasoning", "rollout", "choices", "o
 # The parquet's exact column order: manifest, resample extras, label, balance_kept, texts.
 DATASET_COLUMNS = tuple(MANIFEST_COLUMNS) + RESAMPLE_EXTRA_COLUMNS + ("label", "balance_kept") + TEXT_COLUMNS
 DATASET_SCHEMA_VERSION = 1
+# The provenances a dataset admits when its sidecar names none: k=4 re-rolls only.
+DEFAULT_PROVENANCES = (selection.RESAMPLE_K4,)
 # A source CSV must carry the join keys and the four generation-side texts; ``choices`` /
 # ``option_letters`` are optional there (the baseline fallback fills them).
 SOURCE_KEY_COLUMNS = ("original_index", "hint_name")
@@ -741,10 +743,11 @@ def _blank(series: pd.Series) -> pd.Series:
     return series.isna() | series.astype(object).where(series.notna(), "").astype(str).str.strip().eq("")
 
 
-def validate_dataset(df: pd.DataFrame) -> None:
+def validate_dataset(df: pd.DataFrame, *, provenances: tuple[str, ...] = DEFAULT_PROVENANCES) -> None:
     """Raise ``ValueError`` on a frame that breaks the dataset contract: exactly :data:`DATASET_COLUMNS`
     in order, unique ``rollout_id``, ``label`` in {0, 1} everywhere, ``split`` assigned, ``balance_kept``
-    all True, no blank ``reasoning`` / ``hint_style``, every row a re-roll."""
+    all True, no blank ``reasoning`` / ``hint_style``, every row's provenance in ``provenances`` (default:
+    re-rolls only; a dataset of originals declares ``provenances`` in its sidecar, see :func:`read_dataset`)."""
     if list(df.columns) != list(DATASET_COLUMNS):
         extra = sorted(set(df.columns) - set(DATASET_COLUMNS))
         missing = [c for c in DATASET_COLUMNS if c not in df.columns]
@@ -769,9 +772,24 @@ def validate_dataset(df: pd.DataFrame) -> None:
         if blank.any():
             raise ValueError(f"{int(blank.sum())} row(s) with an empty {col}, e.g. {_first_ids(df, blank)}")
     provenance = df[selection.PROVENANCE_COLUMN].astype(object)
-    originals = provenance.ne(selection.RESAMPLE_K4)
-    if originals.any():
-        raise ValueError(f"{int(originals.sum())} row(s) are not k=4 re-rolls, e.g. {_first_ids(df, originals)}")
+    outside = ~provenance.isin(list(provenances)).fillna(False).astype(bool)
+    if outside.any():
+        what = "k=4 re-rolls" if tuple(provenances) == DEFAULT_PROVENANCES else f"of provenance {list(provenances)}"
+        raise ValueError(f"{int(outside.sum())} row(s) are not {what}, e.g. {_first_ids(df, outside)}")
+
+
+def dataset_provenances(meta: dict) -> tuple[str, ...]:
+    """The provenances a dataset sidecar admits: its ``provenances`` list, else re-rolls only (every
+    dataset written before the key existed)."""
+    value = meta.get("provenances")
+    if value is None:
+        return DEFAULT_PROVENANCES
+    if not isinstance(value, (list, tuple)) or not value:
+        raise ValueError(f"sidecar 'provenances' must be a non-empty list, got {value!r}")
+    unknown = sorted(set(map(str, value)) - set(selection.PROVENANCES))
+    if unknown:
+        raise ValueError(f"sidecar 'provenances' holds unknown value(s) {unknown}; known: {list(selection.PROVENANCES)}")
+    return tuple(str(v) for v in value)
 
 
 def git_sha() -> str | None:
@@ -873,8 +891,8 @@ def read_dataset(path: str | os.PathLike) -> tuple[pd.DataFrame, dict]:
     if not meta_file.exists():
         raise FileNotFoundError(f"{parquet}: sidecar {meta_file.name} is missing — not a dataset written by write_dataset")
     df = pd.read_parquet(parquet)
-    validate_dataset(df)
     meta = json.loads(meta_file.read_text())
+    validate_dataset(df, provenances=dataset_provenances(meta))
     fingerprint = dataset_fingerprint(df)
     if meta.get("fingerprint") != fingerprint:
         raise ValueError(f"{parquet}: the sidecar's fingerprint {meta.get('fingerprint')!r} does not match the rows "
@@ -890,11 +908,11 @@ def spec_with(spec: DatasetSpec, **overrides) -> DatasetSpec:
 
 
 __all__ = [
-    "BALANCE_METHODS", "DATASET_COLUMNS", "DATASET_SCHEMA_VERSION", "DEFAULT_BALANCE_GROUPS",
+    "BALANCE_METHODS", "DATASET_COLUMNS", "DATASET_SCHEMA_VERSION", "DEFAULT_BALANCE_GROUPS", "DEFAULT_PROVENANCES",
     "DEFAULT_CHUNK_ROWS", "DEFAULT_OUTPUT_DIR", "FOLD_ROLES", "ITEMS_SUBDIR", "RESAMPLE_EXTRA_COLUMNS",
     "RESTRICTIONS", "SOURCE_REQUIRED_COLUMNS", "SOURCE_SUBDIR", "SPEC_KEYS", "TEXT_COLUMNS",
     "BalanceSpec", "DatasetSpec", "apply_balance", "baseline_csv_for", "build_dataset", "dataset_fingerprint",
-    "dataset_meta", "dataset_paths", "dataset_sidecars", "fold_report", "fold_roles", "git_sha", "join_texts",
+    "dataset_meta", "dataset_paths", "dataset_provenances", "dataset_sidecars", "fold_report", "fold_roles", "git_sha", "join_texts",
     "load_dataset_manifest", "parse_balance", "parse_spec", "plan_dataset", "question_checks", "read_dataset",
     "resolve_source_csv", "select_dataset_rows", "spec_with", "stable_seed", "umask_mode", "validate_dataset",
     "write_dataset",

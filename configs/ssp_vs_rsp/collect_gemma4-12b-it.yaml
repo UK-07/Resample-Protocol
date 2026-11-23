@@ -1,0 +1,15 @@
+# SSP-vs-RSP probe comparison (src/lib/ssp_vs_rsp.py): residual stream of the ORIGINAL rollouts of the
+# gemma4-12b-it universe (build_universe.py) at the one layer the attention and per-prefix linear probes read.
+#   DATA_ROOT=/workspace/data .venv/bin/python -m src.scripts.collect_probe_activations --config configs/ssp_vs_rsp/collect_gemma4-12b-it.yaml
+extends: ../gemma_4-12b_base.yaml
+dataset: "${DATA_ROOT}/ssp_vs_rsp/probe_datasets/gemma4-12b-it_ssp_rsp_universe.parquet"
+store_folder: gemma4-12b-it_ssp_rsp
+storage:
+  backend: local
+  local_dir: "${DATA_ROOT}/ssp_vs_rsp/activations"
+layers: [26]
+seq_layers: [26]
+max_file_gb: 8
+hf_model_kwargs: {}
+upload_workers: 2
+staging: memory
