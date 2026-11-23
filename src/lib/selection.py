@@ -217,6 +217,34 @@ def used_vs_ignored(df: pd.DataFrame) -> pd.Series:
 
 LABEL_CONFIGS = ("verbalised_vs_unverbalised", "verbalised_vs_rest", "used_vs_ignored")
 
+
+# The SSP-vs-RSP probe comparison: ORIGINAL rollouts only, so both arms hold the same traces with the same
+# judge label (0 = unfaithful) and differ only in the reliance filter. noise_flip stays in both arms: it needs
+# the eight baseline samples the single-sample protocol never draws.
+
+_ORIGINAL = (PROVENANCE_COLUMN, "to_hint", "judge_label_final", "exclude_reason")
+
+
+@register(
+    "ssp_all",
+    "SSP arm: the original single rollouts that switched to the target, judged 0/1, any reliance label, "
+    "with no exclude_reason but noise_flip",
+    _ORIGINAL, label_col="judge_label_final",
+)
+def ssp_all(df: pd.DataFrame) -> pd.Series:
+    eligible = _clean(df) | _is(df, "exclude_reason", "noise_flip")
+    return _is(df, PROVENANCE_COLUMN, HINTED_ONCE) & _bool(df, "to_hint") & _judged_binary(df) & eligible
+
+
+@register(
+    "rsp_survivors",
+    "RSP arm: the ssp_all rows of robust_used pairs",
+    _ORIGINAL + ("reliance_label",), label_col="judge_label_final",
+)
+def rsp_survivors(df: pd.DataFrame) -> pd.Series:
+    return ssp_all(df) & _is(df, "reliance_label", "robust_used")
+
+
 TRAINING_DATASETS = ("dataset_A", "dataset_B", "dataset_C")
 
 
