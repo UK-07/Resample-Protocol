@@ -234,6 +234,22 @@ def _effective_n_process(cfg: TextPipelineConfig, n_texts: int) -> int:
     return 1 if n_texts < SMALL_CORPUS_ROWS else cfg.n_process
 
 
+def _docs(texts: list[str], cfg: TextPipelineConfig, nlp):
+    """The spaCy docs of ``texts``, in order (``nlp`` defaults to :func:`load_nlp`)."""
+    for i, t in enumerate(texts):
+        if not isinstance(t, str):
+            raise TypeError(f"texts[{i}] is {type(t).__name__}, expected str")
+    if not texts:
+        return []
+    if nlp is None:
+        nlp = load_nlp(cfg)
+    _check_nlp(nlp, cfg)
+    longest = max(len(t) for t in texts)
+    if nlp.max_length < longest + 1:
+        nlp.max_length = longest + 1
+    return nlp.pipe(texts, batch_size=cfg.batch_size, n_process=_effective_n_process(cfg, len(texts)))
+
+
 def normalise_texts(texts: list[str], cfg: TextPipelineConfig, *, nlp=None) -> list[str]:
     """One space-joined token string per input text, through the pipeline ``cfg`` describes.
 
@@ -242,52 +258,18 @@ def normalise_texts(texts: list[str], cfg: TextPipelineConfig, *, nlp=None) -> l
     ``batch_size`` batch of ``Doc`` objects); below :data:`SMALL_CORPUS_ROWS` texts the call
     runs in-process regardless.
     """
-    texts = list(texts)
-    for i, t in enumerate(texts):
-        if not isinstance(t, str):
-            raise TypeError(f"texts[{i}] is {type(t).__name__}, expected str")
-    if not texts:
-        return []
-    if nlp is None:
-        nlp = load_nlp(cfg)
-    _check_nlp(nlp, cfg)
-    longest = max(len(t) for t in texts)
-    if nlp.max_length < longest + 1:
-        nlp.max_length = longest + 1
-    docs = nlp.pipe(texts, batch_size=cfg.batch_size, n_process=_effective_n_process(cfg, len(texts)))
-    return [" ".join(_tokens(doc, cfg)) for doc in docs]
+    return [" ".join(_tokens(doc, cfg)) for doc in _docs(list(texts), cfg, nlp)]
 
 
 def normalise_prefixes(texts: list[str], cutoffs: list[list[int]], cfg: TextPipelineConfig, *,
                        nlp=None) -> list[list[str]]:
     """Per text, one normalised string per character cutoff: the tokens of :func:`normalise_texts`
-    whose span ends at or before the cutoff (each text is parsed once, not once per prefix).
-
-    ``cutoffs[i]`` are character offsets into ``texts[i]``; a cutoff at ``len(texts[i])`` gives the
-    same string as :func:`normalise_texts`.
-    """
-    texts = list(texts)
-    if len(cutoffs) != len(texts):
-        raise ValueError(f"cutoffs has {len(cutoffs)} entries for {len(texts)} texts")
-    for i, t in enumerate(texts):
-        if not isinstance(t, str):
-            raise TypeError(f"texts[{i}] is {type(t).__name__}, expected str")
-    if not texts:
-        return []
-    if nlp is None:
-        nlp = load_nlp(cfg)
-    _check_nlp(nlp, cfg)
-    longest = max(len(t) for t in texts)
-    if nlp.max_length < longest + 1:
-        nlp.max_length = longest + 1
-    docs = nlp.pipe(texts, batch_size=cfg.batch_size, n_process=_effective_n_process(cfg, len(texts)))
+    whose span ends at or before the cutoff (each text is parsed once, not once per prefix)."""
     out = []
-    for doc, cuts in zip(docs, cutoffs):
-        kept = [(token.idx + len(token.text), text) for token in doc
-                if (text := _token_text(token, cfg)) is not None]
-        ends = np.asarray([e for e, _ in kept], dtype=np.int64)
-        words = [w for _, w in kept]
-        out.append([" ".join(words[: int(np.searchsorted(ends, int(c), side="right"))]) for c in cuts])
+    for doc, cuts in zip(_docs(list(texts), cfg, nlp), cutoffs):
+        kept = [(token.idx + len(token.text), text) for token in doc if (text := _token_text(token, cfg)) is not None]
+        ends = [end for end, _ in kept]
+        out.append([" ".join(text for _, text in kept[: np.searchsorted(ends, cut, side="right")]) for cut in cuts])
     return out
 
 

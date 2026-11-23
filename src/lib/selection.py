@@ -39,8 +39,6 @@ LABEL_ENCODINGS: dict[str, dict | None] = {
     "contrast_a": {"used": 0, "ignored": 1},
     "label_verbalised_rest": {"rest": 0, "verbalised": 1},
     "label_used_ignored": {"used": 0, "ignored": 1},
-    # SSP-vs-RSP unfaithful_vs_ignored: a switch original is the detection target, a control is not.
-    "to_hint": {True: 0, False: 1},
 }
 
 CASE_FILTERS = ("both",) + tuple(CASES)
@@ -220,99 +218,32 @@ def used_vs_ignored(df: pd.DataFrame) -> pd.Series:
 LABEL_CONFIGS = ("verbalised_vs_unverbalised", "verbalised_vs_rest", "used_vs_ignored")
 
 
-# The SSP-vs-RSP probe comparison: ORIGINAL rollouts (hinted_once) only, so the two arms hold the same
-# traces with the same original-rollout judge label and differ only in the reliance filter.
-#   ssp_all        — every switch original (no reliance filter); controls of every reliance label
-#   rsp_survivors  — switch originals of robust_used pairs; controls of robust_ignored pairs
-# noise_flip stays in both arms: it needs the eight baseline samples the single-sample protocol never draws.
-# Every other exclusion (incoherent, truncated, parse_fail, ...) drops the row.
+# The SSP-vs-RSP probe comparison: ORIGINAL rollouts only, so both arms hold the same traces with the same
+# judge label (0 = unfaithful) and differ only in the reliance filter. noise_flip stays in both arms: it needs
+# the eight baseline samples the single-sample protocol never draws.
 
-SSP_RSP_KEPT_REASONS = ("noise_flip",)
-SSP_RSP_ARMS = ("ssp_all", "rsp_survivors")
-SSP_RSP_TASKS = ("unfaithful_vs_ignored", "unfaithful_vs_faithful")
-_ORIGINAL = (PROVENANCE_COLUMN, "to_hint", "judge_label_final", "role", "reliance_label", "exclude_reason")
-
-
-def _ssp_eligible(df: pd.DataFrame) -> pd.Series:
-    return df["exclude_reason"].isna() | df["exclude_reason"].astype(object).isin(SSP_RSP_KEPT_REASONS).fillna(False)
-
-
-def _original_switch(df: pd.DataFrame, label: int) -> pd.Series:
-    return (_is(df, PROVENANCE_COLUMN, HINTED_ONCE) & _bool(df, "to_hint")
-            & _isin(df, "judge_label_final", [label]) & _ssp_eligible(df))
-
-
-def ssp_rsp_unfaithful(df: pd.DataFrame) -> pd.Series:
-    """Switch originals judged unfaithful (0): the detection target of both tasks."""
-    return _original_switch(df, 0)
-
-
-def ssp_rsp_faithful(df: pd.DataFrame) -> pd.Series:
-    """Switch originals judged faithful (1): the negatives of unfaithful_vs_faithful."""
-    return _original_switch(df, 1)
-
-
-def ssp_rsp_control(df: pd.DataFrame) -> pd.Series:
-    """Matched-control originals (the cued rollout kept its answer): the negatives of unfaithful_vs_ignored."""
-    return _is(df, PROVENANCE_COLUMN, HINTED_ONCE) & _is(df, "role", "control") & _ssp_eligible(df)
+_ORIGINAL = (PROVENANCE_COLUMN, "to_hint", "judge_label_final", "exclude_reason")
 
 
 @register(
-    "ssp_rsp_universe",
-    "SSP-vs-RSP universe, no label: switch originals judged 0/1 plus matched-control originals, every "
-    "exclusion but noise_flip applied — the superset the activation store is collected from",
-    _ORIGINAL, label_col=None,
-)
-def ssp_rsp_universe(df: pd.DataFrame) -> pd.Series:
-    return ssp_rsp_unfaithful(df) | ssp_rsp_faithful(df) | ssp_rsp_control(df)
-
-
-@register(
-    "ssp_all_unfaithful_vs_ignored",
-    "SSP arm, unfaithful vs ignored: unfaithful switch originals (to_hint, label 0) vs matched-control "
-    "originals of any reliance label; to_hint — switch = 0 (detection target), control = 1",
-    _ORIGINAL, label_col="to_hint",
-)
-def ssp_all_unfaithful_vs_ignored(df: pd.DataFrame) -> pd.Series:
-    return ssp_rsp_unfaithful(df) | ssp_rsp_control(df)
-
-
-@register(
-    "rsp_survivors_unfaithful_vs_ignored",
-    "RSP arm, unfaithful vs ignored: unfaithful switch originals of robust_used pairs vs control originals "
-    "of robust_ignored pairs; to_hint — switch = 0 (detection target), control = 1",
-    _ORIGINAL, label_col="to_hint",
-)
-def rsp_survivors_unfaithful_vs_ignored(df: pd.DataFrame) -> pd.Series:
-    return ((ssp_rsp_unfaithful(df) & _is(df, "reliance_label", "robust_used"))
-            | (ssp_rsp_control(df) & _is(df, "reliance_label", "robust_ignored")))
-
-
-@register(
-    "ssp_all_unfaithful_vs_faithful",
-    "SSP arm, unfaithful vs faithful: switch originals judged 0/1, any reliance label; judge_label_final",
+    "ssp_all",
+    "SSP arm: the original single rollouts that switched to the target, judged 0/1, any reliance label, "
+    "with no exclude_reason but noise_flip",
     _ORIGINAL, label_col="judge_label_final",
 )
-def ssp_all_unfaithful_vs_faithful(df: pd.DataFrame) -> pd.Series:
-    return ssp_rsp_unfaithful(df) | ssp_rsp_faithful(df)
+def ssp_all(df: pd.DataFrame) -> pd.Series:
+    eligible = _clean(df) | _is(df, "exclude_reason", "noise_flip")
+    return _is(df, PROVENANCE_COLUMN, HINTED_ONCE) & _bool(df, "to_hint") & _judged_binary(df) & eligible
 
 
 @register(
-    "rsp_survivors_unfaithful_vs_faithful",
-    "RSP arm, unfaithful vs faithful: switch originals judged 0/1 of robust_used pairs; judge_label_final",
-    _ORIGINAL, label_col="judge_label_final",
+    "rsp_survivors",
+    "RSP arm: the ssp_all rows of robust_used pairs",
+    _ORIGINAL + ("reliance_label",), label_col="judge_label_final",
 )
-def rsp_survivors_unfaithful_vs_faithful(df: pd.DataFrame) -> pd.Series:
-    return (ssp_rsp_unfaithful(df) | ssp_rsp_faithful(df)) & _is(df, "reliance_label", "robust_used")
+def rsp_survivors(df: pd.DataFrame) -> pd.Series:
+    return ssp_all(df) & _is(df, "reliance_label", "robust_used")
 
-
-def ssp_rsp_predicate(arm: str, task: str) -> str:
-    """The registered predicate of one (arm, task) of the SSP-vs-RSP comparison."""
-    if arm not in SSP_RSP_ARMS:
-        raise ValueError(f"arm must be one of {SSP_RSP_ARMS}, got {arm!r}")
-    if task not in SSP_RSP_TASKS:
-        raise ValueError(f"task must be one of {SSP_RSP_TASKS}, got {task!r}")
-    return f"{arm}_{task}"
 
 TRAINING_DATASETS = ("dataset_A", "dataset_B", "dataset_C")
 
@@ -420,8 +351,7 @@ def labels_for(name: str, df: pd.DataFrame, *, split: str | None = None, cases: 
 
 __all__ = [
     "BINARY_LABELS", "CASES", "CASE_FILTERS", "HINTED_ONCE", "INCOHERENT_LABEL", "LABEL_CONFIGS", "LABEL_ENCODINGS",
-    "PROVENANCES", "PROVENANCE_COLUMN", "REGISTRY", "RESAMPLE_K4", "SSP_RSP_ARMS", "SSP_RSP_KEPT_REASONS",
-    "SSP_RSP_TASKS", "TRAINING_DATASETS", "Predicate", "encode_labels", "get", "labels_for", "mask", "register",
-    "resample_provenance", "select", "select_rows", "ssp_rsp_control", "ssp_rsp_faithful", "ssp_rsp_predicate",
-    "ssp_rsp_unfaithful", "with_provenance",
+    "PROVENANCES", "PROVENANCE_COLUMN", "REGISTRY", "RESAMPLE_K4", "TRAINING_DATASETS", "Predicate",
+    "encode_labels", "get", "labels_for", "mask", "register", "resample_provenance", "select",
+    "select_rows", "with_provenance",
 ]

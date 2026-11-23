@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Figures of the SSP-vs-RSP probe comparison.
 
-``auroc__<task>__<test>__<variant>.{png,pdf}``: AUROC (y) against the share of the CoT the probe sees (x),
-one panel per model, six paired lines — attention / linear (last prefix token) / TF-IDF (prefix text), each
-trained on ssp-all (dashed, hollow markers) and on RSP-survivors (solid, filled markers); bands: 95%
-question-clustered bootstrap intervals. ``delta__<task>.{png,pdf}``: the model-mean paired difference
-RSP − SSP per probe, one panel per (test set, variant).
+``auroc__<test>__<variant>.{png,pdf}``: AUROC (y) against the share of the CoT the probe sees (x), one panel
+per model, six paired lines — attention / linear (last prefix token) / TF-IDF (prefix text), each trained on
+ssp-all (dashed, hollow markers) and on RSP-survivors (solid, filled markers); bands: 95% question-clustered
+bootstrap intervals. ``delta.{png,pdf}``: the model-mean paired difference RSP − SSP per probe, one panel per
+(test set, variant).
 
     DATA_ROOT=/workspace/data python -m src.scripts.ssp_vs_rsp.plot
 """
@@ -25,7 +25,6 @@ from matplotlib.lines import Line2D  # noqa: E402
 from src.lib import ssp_vs_rsp as X  # noqa: E402
 from src.lib.paths import resolve_data_path  # noqa: E402
 
-ROOT = "${DATA_ROOT}/ssp_vs_rsp"
 # Reference palette, categorical slots 1-3 (validated all-pairs); identity also carried by marker shape.
 PROBE_STYLE = {"attention": ("#2a78d6", "o", "Attention probe"),
                "linear": ("#eb6834", "s", "Linear probe (last prefix token)"),
@@ -34,7 +33,7 @@ ARM_STYLE = {"rsp_survivors": ("-", True, "RSP-survivors"), "ssp_all": ("--", Fa
 TEXT, MUTED, GRID = "#0b0b0b", "#52514e", "#e4e3df"
 MODEL_LABEL = {"qwen3-8b": "Qwen3-8B", "nemotron-nano-9b-v2": "Nemotron-Nano-9B-v2",
                "olmo3-7b-think": "OLMo-3-7B-Think", "gemma4-12b-it": "Gemma-4-12B"}
-TASK_LABEL = {"unfaithful_vs_ignored": "unfaithful vs cue-ignored", "unfaithful_vs_faithful": "unfaithful vs faithful"}
+TASK_LABEL = "unfaithful vs faithful"
 TEST_LABEL = {"ssp_all": "test set: ssp-all", "rsp_survivors": "test set: RSP-survivors",
               "gold": "test set: gold (12 fresh re-rolls)"}
 VARIANT_LABEL = {"posthoc_capped": "all cue styles, post_hoc capped to 1/8", "no_posthoc": "all cue styles except post_hoc"}
@@ -59,10 +58,8 @@ def legend_handles():
     return h
 
 
-def auroc_figure(df, task, test, variant, models, out):
-    sub = df[(df["task"] == task) & (df["test"] == test) & (df["variant"] == variant)]
-    if sub.empty:
-        return
+def auroc_figure(df, test, variant, models, out):
+    sub = df[(df["test"] == test) & (df["variant"] == variant)]
     fig, axes = plt.subplots(1, len(models), figsize=(3.3 * len(models), 3.4), sharey=True, constrained_layout=True)
     axes = [axes] if len(models) == 1 else list(axes)
     lo_all = max(0.0, min(0.45, float(sub["lo"].min()) - 0.02))
@@ -90,22 +87,18 @@ def auroc_figure(df, task, test, variant, models, out):
         ax.set_ylim(lo_all, 1.0)
         ax.set_xlabel("CoT seen by the probe (%)", fontsize=8, color=MUTED)
     axes[0].set_ylabel("AUROC (detecting unfaithful)", fontsize=8, color=MUTED)
-    fig.suptitle(f"{TASK_LABEL[task]}  ·  {TEST_LABEL[test]}  ·  {VARIANT_LABEL[variant]}", fontsize=10,
+    fig.suptitle(f"{TASK_LABEL}  ·  {TEST_LABEL[test]}  ·  {VARIANT_LABEL[variant]}", fontsize=10,
                  color=TEXT, x=0.01, ha="left")
     fig.legend(handles=legend_handles(), loc="outside lower center", ncol=5, frameon=False, fontsize=8)
     for ext in ("png", "pdf"):
-        fig.savefig(out / f"auroc__{task}__{test}__{variant}.{ext}", dpi=200)
+        fig.savefig(out / f"auroc__{test}__{variant}.{ext}", dpi=200)
     plt.close(fig)
 
 
-def delta_figure(dm, task, out):
-    sub = dm[dm["task"] == task]
-    if sub.empty:
-        return
-    tests = [t for t in X.TEST_SETS if t in set(sub["test"])]
-    fig, axes = plt.subplots(len(X.VARIANTS), len(tests), figsize=(3.4 * len(tests), 5.6), sharey=True,
+def delta_figure(sub, out):
+    fig, axes = plt.subplots(len(X.VARIANTS), len(X.TEST_SETS), figsize=(3.4 * len(X.TEST_SETS), 5.6), sharey=True,
                              sharex=True, constrained_layout=True, squeeze=False)
-    for (i, variant), (j, test) in itertools.product(enumerate(X.VARIANTS), enumerate(tests)):
+    for (i, variant), (j, test) in itertools.product(enumerate(X.VARIANTS), enumerate(X.TEST_SETS)):
         ax = axes[i][j]
         style_axes(ax)
         ax.axhline(0, color=MUTED, linewidth=0.9)
@@ -115,7 +108,7 @@ def delta_figure(dm, task, out):
             if p.empty:
                 continue
             x = p["fraction"] * 100
-            ax.fill_between(x, p["lo"], p["hi"], color=color, alpha=0.10, linewidth=0)
+            ax.fill_between(x, p["delta_lo"], p["delta_hi"], color=color, alpha=0.10, linewidth=0)
             ax.plot(x, p["delta"], color=color, linewidth=2, marker=marker, markersize=5)
         ax.set_title(f"{TEST_LABEL[test]}\n{VARIANT_LABEL[variant]}", fontsize=8, color=TEXT, loc="left")
         ax.set_xticks([10, 30, 50, 70, 100])
@@ -123,19 +116,19 @@ def delta_figure(dm, task, out):
             ax.set_xlabel("CoT seen by the probe (%)", fontsize=8, color=MUTED)
         if j == 0:
             ax.set_ylabel("ΔAUROC, RSP-survivors − ssp-all\n(mean over models)", fontsize=8, color=MUTED)
-    fig.suptitle(f"{TASK_LABEL[task]}: paired AUROC gain from training on RSP-survivors", fontsize=10, color=TEXT,
+    fig.suptitle(f"{TASK_LABEL}: paired AUROC gain from training on RSP-survivors", fontsize=10, color=TEXT,
                  x=0.01, ha="left")
     fig.legend(handles=legend_handles()[:3], loc="outside lower center", ncol=3, frameon=False, fontsize=8)
     for ext in ("png", "pdf"):
-        fig.savefig(out / f"delta__{task}.{ext}", dpi=200)
+        fig.savefig(out / f"delta.{ext}", dpi=200)
     plt.close(fig)
 
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--models", nargs="+", default=list(X.MODELS))
-    ap.add_argument("--results", default=f"{ROOT}/results", help="results directory (default %(default)s)")
-    ap.add_argument("--figures", default=f"{ROOT}/figures", help="figures directory (default %(default)s)")
+    ap.add_argument("--results", default=f"{X.ROOT}/results", help="results directory (default %(default)s)")
+    ap.add_argument("--figures", default=f"{X.ROOT}/figures", help="figures directory (default %(default)s)")
     a = ap.parse_args(argv)
     res = resolve_data_path(a.results)
     df = pd.read_csv(res / "auroc.csv")
@@ -143,11 +136,9 @@ def main(argv=None) -> int:
     out = resolve_data_path(a.figures)
     out.mkdir(parents=True, exist_ok=True)
     plt.rcParams.update({"font.family": "DejaVu Sans"})
-    for task, test, variant in itertools.product(X.TASKS, X.TEST_SETS, X.VARIANTS):
-        auroc_figure(df, task, test, variant, models, out)
-    dm = pd.read_csv(res / "delta_model_mean.csv")
-    for task in X.TASKS:
-        delta_figure(dm, task, out)
+    for test, variant in itertools.product(X.TEST_SETS, X.VARIANTS):
+        auroc_figure(df, test, variant, models, out)
+    delta_figure(pd.read_csv(res / "delta_model_mean.csv"), out)
     print(f"figures in {out}")
     return 0
 
